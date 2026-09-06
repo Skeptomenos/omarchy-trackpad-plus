@@ -10,28 +10,91 @@ Panel {
   id: root
   moduleName: "awkent01.touchpad"
   ipcTarget: "awkent01.touchpad"
-  manageIpc: false
+  manageIpc: true
 
-  // ---- State ----
+  // Each panel instance can select a device; the helper serializes writes across bars.
+  property var devices: []
+  property string selectedDevice: "apple"
+  property string selectedLabel: "Apple"
+  property bool deviceConnected: false
   property string deviceName: ""
   property bool touchpadEnabled: true
   property bool naturalScroll: false
   property bool tapToClick: true
   property bool disableWhileTyping: true
   property bool clickfingerBehavior: true
-  property real scrollFactor: 0.4
-  // Hyprland sensitivity is [-1.0, 1.0] with 0.0 as libinput's unaccelerated
-  // baseline. There is no input:touchpad:sensitivity -- only the global
-  // input:sensitivity, which would drag the trackpoint and any USB mouse along
-  // with it -- so this is applied per-device to the touchpad alone.
+  property bool pointerAcceleration: true
+  property real scrollFactor: 0.2
   property real pointerSpeed: 0.0
   property real pendingPointerSpeed: 0.0
+  property string settingsError: ""
+  property var pendingActions: []
+  property int editGeneration: 0
+  property int stateGeneration: 0
+  property bool refreshPending: false
+  readonly property string backend: String(Qt.resolvedUrl("trackpads.py")).replace(/^file:\/\//, "")
 
-  // The generated Lua on disk was written by whatever version of this widget
-  // last ran, and it is only rewritten when a setting changes -- so on an
-  // upgrade a user who touches nothing keeps the old file indefinitely. Rewrite
-  // it once per shell start instead, as soon as there is real state to write.
-  property bool settingsRewritten: false
+  function updateState(raw) {
+    var data
+    try { data = JSON.parse(raw) } catch (e) { settingsError = "Could not read trackpad settings"; return }
+    if (data.error) { settingsError = data.error; return }
+    devices = data.devices || []
+    loadSelection()
+  }
+
+  function loadSelection() {
+    var row = null
+    for (var i = 0; i < devices.length; i++) {
+      if (devices[i].id === selectedDevice) row = devices[i]
+    }
+    if (!row && devices.length) { row = devices[0]; selectedDevice = row.id }
+    if (!row) return
+    selectedLabel = row.label
+    deviceConnected = row.connected
+    deviceName = row.names[0] || ""
+    var v = row.settings
+    touchpadEnabled = v.enabled
+    naturalScroll = v.natural_scroll
+    tapToClick = v.tap_to_click
+    disableWhileTyping = v.disable_while_typing
+    clickfingerBehavior = v.clickfinger_behavior
+    pointerAcceleration = v.accel_profile !== "flat"
+    scrollFactor = v.scroll_factor
+    pendingScrollFactor = scrollFactor
+    pointerSpeed = v.sensitivity
+    pendingPointerSpeed = pointerSpeed
+  }
+
+  function selectDevice(key) {
+    // Flush pending slider edits against the OLD device before changing selection.
+    if (scrollDebounce.running) { scrollDebounce.stop(); commitScrollFactor() }
+    if (pointerDebounce.running) { pointerDebounce.stop(); commitPointerSpeed() }
+    selectedDevice = key
+    settingsError = ""
+    loadSelection()
+  }
+
+  function enqueue(option, value) {
+    editGeneration++
+    settingsError = ""
+    var queue = pendingActions.slice()
+    queue.push({ device: selectedDevice, option: option, value: value })
+    pendingActions = queue
+    // Keep the local snapshot consistent while queued writes finish.
+    for (var i = 0; i < devices.length; i++) {
+      if (devices[i].id === selectedDevice) devices[i].settings[option] = value
+    }
+    runNextAction()
+  }
+
+  function runNextAction() {
+    if (actionProc.running || pendingActions.length === 0) return
+    var queue = pendingActions.slice()
+    var next = queue.shift()
+    pendingActions = queue
+    actionProc.command = bounded(10, ["python3", backend, "set", next.device, next.option, JSON.stringify(next.value)])
+    actionProc.running = true
+  }
 
   // Pending scroll factor while dragging the slider.
   property real pendingScrollFactor: 0.4
@@ -47,7 +110,7 @@ Panel {
   property int selectedIndex: 0
   property bool cursorActive: false
 
-  readonly property var allSections: ["header", "scroll", "pointer", "natural", "tap", "typing", "clickfinger"]
+  readonly property var allSections: ["device", "header", "scroll", "pointer", "acceleration", "natural", "tap", "typing", "clickfinger"]
 
   readonly property string icon: {
     if (!deviceName) return ""
@@ -86,17 +149,15 @@ Panel {
     if (!deviceName) return []
     return touchpadEnabled ? enabledPhrases : disabledPhrases
   }
-  readonly property bool rotatingPhrases: activePhrases.length > 0
+  readonly property bool rotatingPhrases: false
 
   // Guard on the list itself rather than on deviceName. Bindings settle in
   // arbitrary order, so there is a tick where deviceName is already set but
   // activePhrases has not re-evaluated yet -- phraseIndex % 0 is NaN there,
   // and the lookup returns undefined, which QML refuses to assign to a string.
-  readonly property string heroStatusText: {
-    var list = activePhrases
-    if (!list || list.length === 0) return "No device"
-    return String(list[phraseIndex % list.length] || "No device")
-  }
+  readonly property string heroStatusText: deviceConnected
+    ? (touchpadEnabled ? "Settings saved separately" : "Trackpad disabled")
+    : "Disconnected · settings remembered"
 
   readonly property color hoverFill: bar
     ? Style.hoverFillFor(bar.foreground, Color.accent)
@@ -118,7 +179,11 @@ Panel {
   }
 
   function moveCursorH(delta) {
-    if (focusSection === "scroll") {
+    if (focusSection === "device") {
+      var index = devices.findIndex(function(d) { return d.id === selectedDevice })
+      var next = Math.max(0, Math.min(devices.length - 1, index + delta))
+      if (devices[next]) selectDevice(devices[next].id)
+    } else if (focusSection === "scroll") {
       adjustScrollFactor(delta > 0 ? 0.1 : -0.1)
     } else if (focusSection === "pointer") {
       adjustPointerSpeed(delta > 0 ? 0.1 : -0.1)
@@ -126,6 +191,7 @@ Panel {
   }
 
   function activateCursor() {
+    if (focusSection === "acceleration") { togglePointerAcceleration(); return }
     if (focusSection === "header") { toggleTouchpad(); return }
     if (focusSection === "natural") { toggleNaturalScroll(); return }
     if (focusSection === "tap") { toggleTapToClick(); return }
@@ -147,37 +213,11 @@ Panel {
     return ["timeout", "-k", "2", String(seconds)].concat(argv)
   }
 
-  // ---- Actions ----
-  // The reload chained onto the enable is defensive, not a proven fix.
-  //
-  // We hit one failure where the pad stayed dead after toggling back on while
-  // the panel reported ENABLED, and an explicit `hyprctl reload` revived it.
-  // The obvious explanation -- that hl.device({ enabled = true }) cannot
-  // re-attach an already-detached device -- was later tested directly and is
-  // FALSE: `omarchy-toggle-touchpad off` then `on` recovers fine on its own,
-  // with or without a config reload in between. So the original trigger is
-  // still unidentified, and quite possibly was a transient unrelated to the
-  // stock tool (the shell was being restarted repeatedly at the time).
-  //
-  // The reload stays because it is cheap, idempotent, and makes the enable
-  // path robust whatever that transient was -- it also re-applies our own
-  // persisted settings. Do not read it as documentation of a Hyprland bug.
-  // It is ordered after omarchy-toggle-input-device clears the disabled-name
-  // marker; reloading first would let disabled-input-device.lua re-disable.
+  // ---- Actions: every change is scoped to the selected trackpad. ----
   function toggleTouchpad() {
     if (!deviceName) return
-    var next = !touchpadEnabled
-    touchpadEnabled = next
-    if (next) {
-      Quickshell.execDetached(bounded(12, ["bash", "-c",
-        "omarchy-toggle-input-device touchpad on && hyprctl reload >/dev/null 2>&1"]))
-    } else {
-      Quickshell.execDetached(bounded(12, ["omarchy-toggle-input-device", "touchpad", "off"]))
-    }
-    // The optimistic flip above is a guess until the marker file and the
-    // compositor agree. Re-read shortly after so a failed enable corrects
-    // itself rather than leaving the panel claiming ENABLED over a dead pad.
-    enableSettle.restart()
+    touchpadEnabled = !touchpadEnabled
+    enqueue("enabled", touchpadEnabled)
   }
 
   function toggleNaturalScroll() {
@@ -204,86 +244,12 @@ Panel {
     setHyprOption("clickfinger_behavior", next)
   }
 
-  // Every caller passes a literal option name and an already-clamped value, but
-  // this string is handed to `hyprctl eval` as Lua, so it is checked here
-  // instead of resting on a caller audit -- the guarantee should be readable in
-  // this function alone. An option name is a bare identifier; a number is
-  // rendered as a plain decimal rather than through String(), which for an
-  // unexpected magnitude could emit exponent notation.
-  function setHyprOption(option, value) {
-    if (!/^[a-z_]+$/.test(option)) return
-    var luaValue
-    if (typeof value === "boolean") {
-      luaValue = value ? "true" : "false"
-    } else {
-      var n = Number(value)
-      if (!isFinite(n)) return
-      luaValue = n.toFixed(1)
-    }
-    Quickshell.execDetached(bounded(5,
-      ["hyprctl", "eval", "hl.config({ input = { touchpad = { " + option + " = " + luaValue + " } } })"]))
-    persistSettings()
-  }
+  function setHyprOption(option, value) { enqueue(option, value) }
 
-  // `hyprctl eval` only changes the running compositor. Omarchy's default
-  // input.lua hardcodes natural_scroll = false, so the next config reload
-  // (theme switch, saving any hypr/*.lua, hyprctl reload) re-applies the
-  // default and our runtime change is lost. Mirror every setting into the
-  // toggles state dir, which default/hypr/toggles.lua re-requires on each
-  // reload -- and does so after hypr/input.lua, so it wins.
-  function persistSettings() {
-    var lua = "-- Generated by the awkent01.touchpad bar widget. Edit the widget, not this file.\n"
-      + "-- Loaded on every Hyprland config reload by default/hypr/toggles.lua, which is\n"
-      + "-- what keeps these from reverting to Omarchy's input.lua defaults.\n"
-      + "--\n"
-      + "-- Every value below is a literal. This file opens nothing and requires nothing\n"
-      + "-- at reload time, so a config reload cannot be redirected or blocked by way of\n"
-      + "-- this widget: there is no path here for anyone to plant a symlink or a FIFO on.\n"
-      + "hl.config({\n"
-      + "  input = {\n"
-      + "    touchpad = {\n"
-      + "      natural_scroll = " + (naturalScroll ? "true" : "false") + ",\n"
-      + "      tap_to_click = " + (tapToClick ? "true" : "false") + ",\n"
-      + "      disable_while_typing = " + (disableWhileTyping ? "true" : "false") + ",\n"
-      + "      clickfinger_behavior = " + (clickfingerBehavior ? "true" : "false") + ",\n"
-      + "      scroll_factor = " + Model.clampScrollFactor(scrollFactor).toFixed(1) + ",\n"
-      + "    },\n"
-      + "  },\n"
-      + "})\n"
-
-    // The per-device pointer sensitivity, re-applied on reload.
-    //
-    // An earlier version read the device name back out of a sibling state file
-    // here, with io.open(). That could not be made safe: Hyprland's config Lua
-    // has no lstat, no O_NOFOLLOW and no O_NONBLOCK, so a FIFO planted on that
-    // path blocks the reload inside io.open -- before any bounded read can
-    // help -- and a symlink is followed. Bounding the read after the open was
-    // never going to fix a hazard that lives in the open.
-    //
-    // So the name is embedded as a literal. It is the one string in this file
-    // that comes from outside: Model.parseTouchpadDevice admits only a
-    // printable, length-capped name, and Model.luaQuote renders it as escaped
-    // bytes, so it cannot close the literal or carry a newline out of it.
-    var deviceLiteral = Model.luaQuote(deviceName)
-    if (deviceLiteral !== null) {
-      lua += "\n"
-        + "hl.device({ name = " + deviceLiteral + ", sensitivity = "
-        + Model.clampSensitivity(pointerSpeed).toFixed(1) + " })\n"
-    }
-
-    // Refuse to install a chunk carrying anything but printable ASCII and
-    // newlines. Nothing above can produce one -- only literals, booleans, a
-    // clamped number and luaQuote output reach it -- so this is the assertion
-    // that states the guarantee where it is enforced rather than leaving it to
-    // be re-derived by reading every builder above.
-    if (!Model.isSafeLuaChunk(lua)) return
-
-    // The write goes through touchpad-state rather than a redirection: the path
-    // is predictable, so it has to land via an exclusive temporary renamed over
-    // a checked destination, inside a directory whose whole chain the helper
-    // proved is ours. Passing the content as an argument keeps it out of shell
-    // parsing entirely.
-    Quickshell.execDetached(bounded(10, [stateScript, "write", "touchpad-settings.lua", lua]))
+  function togglePointerAcceleration() {
+    if (!touchpadEnabled) return
+    pointerAcceleration = !pointerAcceleration
+    enqueue("accel_profile", pointerAcceleration ? "adaptive" : "flat")
   }
 
   function adjustScrollFactor(delta) {
@@ -318,51 +284,39 @@ Panel {
     pointerDebounce.restart()
   }
 
-  // Applied per-device rather than through input:sensitivity so the trackpoint
-  // and any plugged-in mouse keep their own speed. The device name lookup,
-  // validation, escaping, and persistence all live in the touchpad-sensitivity
-  // script beside this file -- keeping that logic out of a QML string literal
-  // is what makes the Lua escaping reviewable and testable.
-  readonly property string sensitivityScript:
-    String(Qt.resolvedUrl("touchpad-sensitivity")).replace(/^file:\/\//, "")
-
-  // Every read and write of this widget's state files goes through here. See
-  // the header of touchpad-state for what it guarantees and why.
-  readonly property string stateScript:
-    String(Qt.resolvedUrl("touchpad-state")).replace(/^file:\/\//, "")
-
-  // Randomised per shell start, and passed to the collector as an argument
-  // rather than baked into its script. hyprctl's device list is the one
-  // free-form string in that stream, so a device named after a fixed marker
-  // could otherwise shift every field after it by one and hand the parser a
-  // value from the wrong slot.
-  readonly property string splitMarker:
-    "---SPLIT-" + Math.floor(Math.random() * 0x7fffffff).toString(16) + "---"
-
   function commitPointerSpeed() {
-    if (!deviceName) return
-    var v = Model.clampSensitivity(pendingPointerSpeed)
-    pointerSpeed = v
-    // The resolved device name is passed in rather than looked up again inside
-    // the script: two independent lookups can disagree, and the name persisted
-    // into the generated Lua has to be the one the live apply just used.
-    Quickshell.execDetached(bounded(10, [sensitivityScript, v.toFixed(1), deviceName]))
-    persistSettings()
+    enqueue("sensitivity", Model.clampSensitivity(pendingPointerSpeed))
   }
 
   function refresh() {
-    if (!stateProc.running) stateProc.running = true
+    refreshPending = true
+    if (!stateProc.running && !actionProc.running && pendingActions.length === 0
+        && !scrollDebounce.running && !pointerDebounce.running) {
+      refreshPending = false
+      stateGeneration = editGeneration
+      stateProc.running = true
+    }
   }
 
-  // ---- IPC ----
-  IpcHandler {
-    target: "awkent01.touchpad"
+  function receiveState(raw) {
+    // A read remains stale even after the newer write has finished.
+    if (stateGeneration !== editGeneration || actionProc.running || pendingActions.length
+        || scrollDebounce.running || pointerDebounce.running) {
+      refreshPending = true
+      return
+    }
+    updateState(raw)
+  }
 
-    function open() { root.open() }
-    function close() { root.close() }
-    function toggle() { root.toggle() }
-    function show() { root.open() }
-    function hide() { root.close() }
+  function finishStateRead(code) {
+    if (code !== 0 && !settingsError) settingsError = "Could not read trackpad settings"
+    if (refreshPending) refresh()
+  }
+
+  function finishAction(code) {
+    if (code !== 0 && !settingsError) settingsError = "Could not save trackpad settings"
+    if (pendingActions.length) runNextAction()
+    else refresh()
   }
 
   // ---- Lifecycle ----
@@ -375,7 +329,7 @@ Panel {
   onOpenedChanged: {
     if (opened) {
       refresh()
-      focusSection = "header"
+      focusSection = "device"
       cursorActive = false
     }
   }
@@ -383,7 +337,7 @@ Panel {
   // Poll while open so external changes are reflected.
   Timer {
     interval: 3000
-    running: root.opened
+    running: root.opened || root.devices.length === 0
     repeat: true
     onTriggered: root.refresh()
   }
@@ -454,79 +408,33 @@ Panel {
     onTriggered: root.commitPointerSpeed()
   }
 
-  // ---- State process: reads all touchpad options in one shot ----
-  //
-  // Bounded on both axes, because neither bound comes for free here.
-  //
-  // Time: each hyprctl gets its own short deadline, so one unresponsive call
-  // cannot stall the others, and the whole run gets an outer one as a backstop.
-  // A hung collector is not merely slow -- refresh() will not start a second
-  // run while one is live, so the panel would sit on stale state indefinitely.
-  //
-  // Bytes: every producer is capped at the point it writes. StdioCollector has
-  // no size limit of its own, so an unbounded writer on this pipe is an
-  // unbounded buffer inside the shell -- 64K is already far more device JSON
-  // than any real machine produces, and the option reads are a line each.
   Process {
     id: stateProc
-    command: root.bounded(15, ["bash", "-c",
-      "timeout 2 hyprctl devices -j 2>/dev/null | head -c 65536; echo \"$2\"; " +
-      "timeout 2 hyprctl getoption input:touchpad:natural_scroll -j 2>/dev/null | head -c 4096; echo \"$2\"; " +
-      "timeout 2 hyprctl getoption input:touchpad:scroll_factor -j 2>/dev/null | head -c 4096; echo \"$2\"; " +
-      "timeout 2 hyprctl getoption 'input:touchpad:tap-to-click' -j 2>/dev/null | head -c 4096; echo \"$2\"; " +
-      "timeout 2 hyprctl getoption input:touchpad:disable_while_typing -j 2>/dev/null | head -c 4096; echo \"$2\"; " +
-      "timeout 2 hyprctl getoption input:touchpad:clickfinger_behavior -j 2>/dev/null | head -c 4096; echo \"$2\"; " +
-      // Omarchy's own marker file, tested rather than read: this yields a
-      // boolean and opens nothing, so a planted symlink or FIFO here can at
-      // worst mislabel the toggle for one refresh -- it cannot redirect a
-      // write or block this process. The file belongs to
-      // omarchy-toggle-input-device, so hardening how it is *written* belongs
-      // upstream rather than in a plugin that only reads it.
-      "test -f \"$HOME/.local/state/omarchy/toggles/hypr/touchpad-disabled-name\" && echo disabled || echo enabled; " +
-      "echo \"$2\"; " +
-      // Device options cannot be read back through hyprctl getoption, so the
-      // value we last wrote is the only source of truth for the slider. Read it
-      // through touchpad-state -- a plain `cat` on this predictable path would
-      // follow a planted symlink, and would hang this whole process on a
-      // planted FIFO, leaving the panel with no state at all. The helper path
-      // and the marker are passed as arguments rather than spliced into the
-      // script text.
-      "timeout 5 \"$1\" read touchpad-sensitivity-value 2>/dev/null | head -c 4096 || true",
-      "touchpad-state", root.stateScript, root.splitMarker
-    ])
+    command: root.bounded(15, ["python3", root.backend, "state"])
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        // A short read means the run was cut off partway -- a deadline fired,
-        // or a producer died. Keep the state we already have rather than
-        // reassigning fields from slots that were never filled.
-        var parts = String(text || "").split(root.splitMarker)
-        if (parts.length < 8) return
-
-        root.deviceName = Model.parseTouchpadDevice(parts[0])
-        root.naturalScroll = Model.parseBool(parts[1])
-        root.scrollFactor = Model.parseFloat(parts[2]) || 0.4
-        root.pendingScrollFactor = root.scrollFactor
-        root.tapToClick = Model.parseBool(parts[3])
-        root.disableWhileTyping = Model.parseBool(parts[4])
-        root.clickfingerBehavior = Model.parseBool(parts[5])
-        root.touchpadEnabled = String(parts[6] || "").trim() !== "disabled"
-
-        // null means "never set" -- fall back to Hyprland's 0.0 baseline
-        // rather than letting an unreadable file read as a real value.
-        var sens = Model.parseSensitivityFile(parts[7])
-        root.pointerSpeed = sens === null ? 0.0 : sens
-        root.pendingPointerSpeed = root.pointerSpeed
-
-        // One atomic rewrite per shell start, once the state above is real
-        // rather than defaults, so the file on disk always matches the code
-        // that is running. Without this an upgraded widget leaves the version
-        // it replaced sitting in the reload path.
-        if (!root.settingsRewritten && root.deviceName !== "") {
-          root.settingsRewritten = true
-          root.persistSettings()
-        }
+        root.receiveState(String(text))
       }
+    }
+    onExited: function(code, status) {
+      Qt.callLater(function() { root.finishStateRead(code) })
+    }
+  }
+
+  Process {
+    id: actionProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var data = JSON.parse(String(text))
+          if (data.error) root.settingsError = data.error
+        } catch (e) { root.settingsError = "Could not save trackpad settings" }
+      }
+    }
+    onExited: function(code, status) {
+      Qt.callLater(function() { root.finishAction(code) })
     }
   }
 
@@ -569,6 +477,46 @@ Panel {
         id: column
         anchors.fill: parent
         spacing: Style.space(14)
+
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+          Repeater {
+            model: root.devices
+            CursorSurface {
+              required property var modelData
+              width: (column.width - Style.space(8) * (root.devices.length - 1)) / Math.max(1, root.devices.length)
+              height: Style.space(38)
+              foreground: root.bar.foreground
+              fill: root.selectedDevice === modelData.id ? root.selectedFill : root.hoverFill
+              current: root.selectedDevice === modelData.id
+              hasCursor: root.cursorActive && root.focusSection === "device" && root.selectedDevice === modelData.id
+              Text {
+                anchors.centerIn: parent
+                text: modelData.label
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: root.selectedDevice === modelData.id
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { root.selectDevice(parent.modelData.id); root.focusSection = "device" }
+              }
+            }
+          }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.settingsError !== ""
+          text: root.settingsError
+          wrapMode: Text.Wrap
+          color: Color.urgent
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+        }
 
         // ========== Hero: Touchpad icon + status + power toggle ==========
         Item {
@@ -619,7 +567,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Touchpad"
+              text: root.selectedLabel + " Trackpad"
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -946,6 +894,18 @@ Panel {
           width: parent.width
           spacing: Style.space(6)
           opacity: root.touchpadEnabled ? 1.0 : 0.4
+
+          ToggleRow {
+            width: parent.width
+            label: "Pointer Acceleration"
+            description: root.pointerAcceleration
+              ? "Move faster to travel farther"
+              : "Constant response at any hand speed"
+            checked: root.pointerAcceleration
+            sectionName: "acceleration"
+            enabled: root.touchpadEnabled
+            onToggled: root.togglePointerAcceleration()
+          }
 
           ToggleRow {
             width: parent.width

@@ -4,7 +4,7 @@
   "name": "Touchpad",
   "version": "1.0.0",
   "author": "awkent01",
-  "description": "Touchpad controls: toggle, scroll speed, natural scrolling, tap-to-click",
+  "description": "Per-device touchpad controls: pointer acceleration, speed, scrolling and tapping",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Touchpad",
-    "description": "Touchpad controls: toggle, scroll speed, natural scrolling, tap-to-click",
+    "description": "Per-device touchpad controls: pointer acceleration, speed, scrolling and tapping",
     "category": "Input",
     "allowMultiple": false
   }
