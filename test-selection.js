@@ -19,6 +19,7 @@ function context() {
     editGeneration: 0, stateGeneration: 0, refreshPending: false,
     actionProc: { running: false }, stateProc: { running: false }, backend: 'trackpads.py',
     Model: { clampSensitivity: x => x },
+    Curve: require('./Curve.js'), previousFeels: {}, curveEditor: {},
     scrollDebounce: { running: false, stop() { this.running = false; } },
     pointerDebounce: { running: false, stop() { this.running = false; } }
   };
@@ -128,3 +129,21 @@ function context() {
   assert.match(qml, /Qt\.callLater\(function\(\) \{ root\.finishAction\(code\) \}\)/);
 }
 console.log('Passed: device selection, stale-read rejection, debounce ordering, timeout recovery, and IPC configuration.');
+
+{
+  const ctx = context();
+  ctx.actionProc.running = true;
+  const original = JSON.stringify(ctx.pointerFeel);
+  ctx.applyPointerFeel({profile: 'mac', curve: ctx.Curve.defaults()});
+  assert.equal(ctx.devices[0].settings.accel_profile, 'custom');
+  assert.equal(ctx.pointerFeel.profile, 'mac');
+  ctx.selectDevice('dell');
+  assert.equal(ctx.pointerFeel.profile, 'adaptive');
+  assert.equal(ctx.previousFeels.dell, undefined);
+  assert.equal(ctx.pendingActions[0].device, 'apple');
+  ctx.selectDevice('apple');
+  ctx.restorePointerFeel();
+  assert.equal(JSON.stringify(ctx.pointerFeel), original);
+  assert.equal(ctx.pendingActions[1].value.profile, 'adaptive');
+  assert.equal(ctx.devices[1].settings.accel_profile, 'adaptive');
+}

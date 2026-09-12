@@ -92,6 +92,23 @@ else:
             self.assertEqual(result.returncode, 124)
         self.assertEqual(len(self.call('state')['devices']), 2)
 
+    def test_builtin_apple_curve_survives_restart_and_can_return_to_adaptive(self):
+        self.devices.write_text('{"mice": [{"name": "apple-mtp-multi-touch"}]}')
+        before = self.call('state')['devices'][0]
+        self.assertTrue(before['connected'])
+        self.assertTrue((self.plugin / 'CurveEditor.qml').is_file())
+        self.assertTrue((self.plugin / 'Curve.js').is_file())
+        value = {'profile': 'custom', 'curve': {'precision': 0.3, 'start': 0.8, 'end': 2.4, 'fast': 2.0}}
+        self.call('set', 'apple', 'pointer_feel', json.dumps(value))
+        after = self.call('state')['devices'][0]
+        self.assertEqual(after['settings']['curve'], value['curve'])
+        self.assertEqual(after['settings']['accel_profile'], 'custom')
+        self.assertEqual(after['previous_pointer_feel']['profile'], 'adaptive')
+        self.assertEqual(after['settings']['scroll_factor'], before['settings']['scroll_factor'])
+        value['profile'] = 'adaptive'
+        self.call('set', 'apple', 'pointer_feel', json.dumps(value))
+        self.assertEqual(self.call('state')['devices'][0]['settings']['accel_profile'], 'adaptive')
+
 
 if __name__ == '__main__':
     unittest.main()

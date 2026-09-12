@@ -1,10 +1,11 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
-import Quickshell
 import Quickshell.Io
 import qs.Ui
 import qs.Commons
 import "Model.js" as Model
+import "Curve.js" as Curve
 
 Panel {
   id: root
@@ -24,6 +25,9 @@ Panel {
   property bool disableWhileTyping: true
   property bool clickfingerBehavior: true
   property bool pointerAcceleration: true
+  property var pointerFeel: ({ profile: "adaptive", curve: Curve.defaults() })
+  property var previousFeels: ({})
+  property bool editingCurve: false
   property real scrollFactor: 0.2
   property real pointerSpeed: 0.0
   property real pendingPointerSpeed: 0.0
@@ -59,6 +63,12 @@ Panel {
     disableWhileTyping = v.disable_while_typing
     clickfingerBehavior = v.clickfinger_behavior
     pointerAcceleration = v.accel_profile !== "flat"
+    pointerFeel = Curve.fromSettings(v)
+    if (row.previous_pointer_feel) {
+      var previous = Curve.copy(previousFeels)
+      previous[selectedDevice] = row.previous_pointer_feel
+      previousFeels = previous
+    }
     scrollFactor = v.scroll_factor
     pendingScrollFactor = scrollFactor
     pointerSpeed = v.sensitivity
@@ -82,7 +92,15 @@ Panel {
     pendingActions = queue
     // Keep the local snapshot consistent while queued writes finish.
     for (var i = 0; i < devices.length; i++) {
-      if (devices[i].id === selectedDevice) devices[i].settings[option] = value
+      if (devices[i].id === selectedDevice) {
+        var settings = devices[i].settings
+        if (option === "pointer_feel") {
+          devices[i].previous_pointer_feel = Curve.fromSettings(settings)
+          settings.accel_profile = value.profile === "mac" || value.profile === "custom" ? "custom" : value.profile
+          settings.curve = Curve.copy(value.curve)
+          settings.curve_preset = value.profile === "mac" ? "mac" : "custom"
+        } else settings[option] = value
+      }
     }
     runNextAction()
   }
@@ -110,7 +128,9 @@ Panel {
   property int selectedIndex: 0
   property bool cursorActive: false
 
-  readonly property var allSections: ["device", "header", "scroll", "pointer", "acceleration", "natural", "tap", "typing", "clickfinger"]
+  readonly property var allSections: ["device", "header", "scroll"].concat(
+    pointerFeel.profile === "mac" || pointerFeel.profile === "custom" ? [] : ["pointer"]
+  ).concat(["acceleration", "natural", "tap", "typing", "clickfinger"])
 
   readonly property string icon: {
     if (!deviceName) return ""
@@ -191,7 +211,7 @@ Panel {
   }
 
   function activateCursor() {
-    if (focusSection === "acceleration") { togglePointerAcceleration(); return }
+    if (focusSection === "acceleration") { openCurveEditor(); return }
     if (focusSection === "header") { toggleTouchpad(); return }
     if (focusSection === "natural") { toggleNaturalScroll(); return }
     if (focusSection === "tap") { toggleTapToClick(); return }
@@ -252,6 +272,28 @@ Panel {
     enqueue("accel_profile", pointerAcceleration ? "adaptive" : "flat")
   }
 
+  function openCurveEditor() {
+    if (!touchpadEnabled) return
+    selectDevice(selectedDevice) // Flush any pending speed edits first.
+    editingCurve = true
+    curveEditor.begin()
+  }
+
+  function applyPointerFeel(value) {
+    var previous = Curve.copy(previousFeels)
+    previous[selectedDevice] = Curve.copy(pointerFeel)
+    previousFeels = previous
+    enqueue("pointer_feel", value)
+    loadSelection()
+  }
+
+  function restorePointerFeel() {
+    if (!previousFeels[selectedDevice]) return
+    var value = Curve.copy(previousFeels[selectedDevice])
+    applyPointerFeel(value)
+    curveEditor.draft = Curve.copy(value)
+  }
+
   function adjustScrollFactor(delta) {
     var next = Model.clampScrollFactor(scrollFactor + delta)
     scrollFactor = next
@@ -271,6 +313,7 @@ Panel {
   }
 
   function adjustPointerSpeed(delta) {
+    if (pointerFeel.profile === "mac" || pointerFeel.profile === "custom") return
     var next = Model.clampSensitivity(pointerSpeed + delta)
     pointerSpeed = next
     pendingPointerSpeed = next
@@ -278,6 +321,7 @@ Panel {
   }
 
   function setPointerSpeed(value) {
+    if (pointerFeel.profile === "mac" || pointerFeel.profile === "custom") return
     var clamped = Model.clampSensitivity(value)
     pointerSpeed = clamped
     pendingPointerSpeed = clamped
@@ -328,6 +372,7 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
+      editingCurve = false
       refresh()
       focusSection = "device"
       cursorActive = false
@@ -458,12 +503,13 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(340))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+    contentWidth: panel.fittedContentWidth(Style.space(root.editingCurve ? 430 : 340))
+    contentHeight: panel.fittedContentHeight(root.editingCurve ? curveColumn.implicitHeight : column.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: root.editingCurve
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         if (dy !== 0) root.moveCursor(dy)
@@ -473,9 +519,50 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
+      ScrollView {
+        anchors.fill: parent
+        visible: root.editingCurve
+        clip: true
+        contentWidth: availableWidth
+        Column {
+          id: curveColumn
+          width: parent.width
+          spacing: Style.space(10)
+          Text {
+            visible: root.settingsError !== ""
+            width: parent.width
+            text: root.settingsError
+            color: Color.urgent
+            wrapMode: Text.Wrap
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+          CurveEditor {
+            id: curveEditor
+            width: parent.width
+            foreground: root.bar.foreground
+            accent: Color.accent
+            fontFamily: root.bar.fontFamily
+            uiScale: Style.space(100) / 100
+            saved: root.pointerFeel
+            deviceLabel: root.selectedLabel + " Trackpad"
+            busy: actionProc.running || root.pendingActions.length > 0
+            canRestore: !!root.previousFeels[root.selectedDevice]
+            onApplyRequested: function(value) { root.applyPointerFeel(value) }
+            onRestoreRequested: root.restorePointerFeel()
+            onBackRequested: { root.editingCurve = false; keyCatcher.forceActiveFocus() }
+          }
+        }
+      }
+
+      ScrollView {
+        anchors.fill: parent
+        visible: !root.editingCurve
+        clip: true
+        contentWidth: availableWidth
       Column {
         id: column
-        anchors.fill: parent
+        width: parent.width
         spacing: Style.space(14)
 
         Row {
@@ -484,6 +571,7 @@ Panel {
           Repeater {
             model: root.devices
             CursorSurface {
+              id: deviceButton
               required property var modelData
               width: (column.width - Style.space(8) * (root.devices.length - 1)) / Math.max(1, root.devices.length)
               height: Style.space(38)
@@ -493,11 +581,14 @@ Panel {
               hasCursor: root.cursorActive && root.focusSection === "device" && root.selectedDevice === modelData.id
               Text {
                 anchors.centerIn: parent
-                text: modelData.label
+                width: parent.width - Style.space(12)
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                text: deviceButton.modelData.label
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.body
-                font.bold: root.selectedDevice === modelData.id
+                font.bold: root.selectedDevice === deviceButton.modelData.id
               }
               MouseArea {
                 anchors.fill: parent
@@ -689,8 +780,8 @@ Panel {
                 value: root.scrollFactor
                 onMoved: function(v) { root.setScrollFactor(v) }
                 onReleased: function(v) {
-                  scrollDebounce.stop()
                   root.setScrollFactor(v)
+                  scrollDebounce.stop()
                   root.commitScrollFactor()
                 }
               }
@@ -746,6 +837,8 @@ Panel {
         // Range is Hyprland's [-1.0, 1.0], centered on 0.0 rather than running
         // low-to-high like the scroll slider above it.
         Column {
+          id: pointerControls
+          visible: root.pointerFeel.profile !== "mac" && root.pointerFeel.profile !== "custom"
           width: parent.width
           spacing: Style.space(8)
           opacity: root.touchpadEnabled ? 1.0 : 0.4
@@ -837,8 +930,8 @@ Panel {
                 value: root.pointerSpeed
                 onMoved: function(v) { root.setPointerSpeed(v) }
                 onReleased: function(v) {
-                  pointerDebounce.stop()
                   root.setPointerSpeed(v)
+                  pointerDebounce.stop()
                   root.commitPointerSpeed()
                 }
               }
@@ -895,16 +988,38 @@ Panel {
           spacing: Style.space(6)
           opacity: root.touchpadEnabled ? 1.0 : 0.4
 
-          ToggleRow {
+          CursorSurface {
             width: parent.width
-            label: "Pointer Acceleration"
-            description: root.pointerAcceleration
-              ? "Move faster to travel farther"
-              : "Constant response at any hand speed"
-            checked: root.pointerAcceleration
-            sectionName: "acceleration"
+            height: Style.space(58)
+            foreground: root.bar.foreground
+            fill: root.hoverFill
+            hasCursor: root.cursorActive && root.focusSection === "acceleration"
             enabled: root.touchpadEnabled
-            onToggled: root.togglePointerAcceleration()
+            Column {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(3)
+              Text {
+                text: "Pointer feel  ›"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                text: ({ adaptive: "System", flat: "Flat", mac: "Mac-inspired", custom: "Custom" })[root.pointerFeel.profile] + " · Presets and acceleration curve"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "acceleration" }
+              onClicked: root.openCurveEditor()
+            }
           }
 
           ToggleRow {
@@ -940,13 +1055,14 @@ Panel {
           ToggleRow {
             width: parent.width
             label: "Two-Finger Right Click"
-            description: "Use two-finger tap for right-click"
+            description: "Press with two fingers to right-click"
             checked: root.clickfingerBehavior
             sectionName: "clickfinger"
             enabled: root.touchpadEnabled
             onToggled: root.toggleClickfingerBehavior()
           }
         }
+      }
       }
     }
   }
@@ -958,7 +1074,6 @@ Panel {
     required property string description
     required property bool checked
     required property string sectionName
-    property bool enabled: true
 
     signal toggled()
 
