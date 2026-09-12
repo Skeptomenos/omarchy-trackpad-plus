@@ -121,8 +121,8 @@ function context() {
 
 {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8'));
-  assert.equal(manifest.id, 'awkent01.touchpad');
-  assert.match(qml, /ipcTarget: "awkent01\.touchpad"/);
+  assert.equal(manifest.id, 'davefano.trackpad-plus');
+  assert.match(qml, /ipcTarget: "davefano\.trackpad-plus"/);
   assert.match(qml, /manageIpc: true/);
   assert.match(qml, /root\.receiveState\(String\(text\)\)/);
   assert.match(qml, /Qt\.callLater\(function\(\) \{ root\.finishStateRead\(code\) \}\)/);

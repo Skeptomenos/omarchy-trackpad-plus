@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-device trackpad settings for the local Omarchy panel."""
+"""Per-device settings and native pointer curves for Trackpad Plus."""
 import copy
 import ctypes
 import fcntl
@@ -140,7 +140,7 @@ def group_devices(mice):
 
 def lua_for(groups):
     # hyprctl interprets an argument starting with '--' as a CLI flag.
-    lines = ['do -- Managed by local.touchpads. Change settings in the Trackpads panel.']
+    lines = ['do -- Managed by davefano.trackpad-plus. Change settings in Trackpad Plus.']
     for group in groups.values():
         fields = []
         for key, value in sorted(group['settings'].items()):
@@ -181,6 +181,18 @@ def save(state):
             validate_native_curve(group['settings'].get('curve', DEFAULT_CURVE))
     atomic_write(GENERATED, lua_for(state['devices']))
     atomic_write(STATE, json.dumps(state, indent=2) + '\n')
+
+
+def reconcile_generated(state):
+    """Recover a removed rule file or an interrupted two-file save from JSON."""
+    expected = lua_for(state['devices'])
+    if GENERATED.is_file() and GENERATED.read_text() == expected:
+        return
+    for group in state['devices'].values():
+        if group['settings'].get('accel_profile') == 'custom':
+            validate_native_curve(group['settings'].get('curve', DEFAULT_CURVE))
+    hypr('eval', expected)
+    atomic_write(GENERATED, expected)
 
 
 def defaults():
@@ -316,6 +328,7 @@ def main():
             state = change(state, sys.argv[2], sys.argv[3], json.loads(sys.argv[4]))
         elif command not in ('state', 'init'):
             raise ValueError('Unknown command')
+        reconcile_generated(state)
         print(json.dumps(snapshot(state, live)))
 
 

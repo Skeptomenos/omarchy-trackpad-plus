@@ -42,13 +42,13 @@ ShellRoot {
             else: raise RuntimeError('IPC harness did not start')
             assert p.stdout.strip()=='false',p.stdout
             for method,expected in [('open','true'),('close','false'),('toggle','true'),('hide','false'),('show','true')]:
-                p=ipc('awkent01.touchpad',method)
+                p=ipc('davefano.trackpad-plus',method)
                 assert p.returncode==0,p.stderr
                 observed=ipc('verification','opened')
                 if observed.stdout.strip()!=expected:
                     log.flush();log.seek(0);print(log.read())
                     raise AssertionError(method)
-            print('All five upstream IPC commands verified with the installed Omarchy base Panel in an isolated offscreen Quickshell instance.')
+            print('All five Trackpad Plus IPC commands verified with the installed Omarchy base Panel in an isolated offscreen Quickshell instance.')
         finally:
             server.terminate()
             try:server.wait(timeout=3)

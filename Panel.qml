@@ -9,8 +9,8 @@ import "Curve.js" as Curve
 
 Panel {
   id: root
-  moduleName: "awkent01.touchpad"
-  ipcTarget: "awkent01.touchpad"
+  moduleName: "davefano.trackpad-plus"
+  ipcTarget: "davefano.trackpad-plus"
   manageIpc: true
 
   // Each panel instance can select a device; the helper serializes writes across bars.
@@ -658,7 +658,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: root.selectedLabel + " Trackpad"
+              text: "Trackpad Plus"
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title

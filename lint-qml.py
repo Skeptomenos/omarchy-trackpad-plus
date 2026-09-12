@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Lint all QML; allow only identified gaps in installed host API metadata."""
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+repo = Path(__file__).resolve().parent
+lint = shutil.which('qmllint') or '/usr/lib/qt6/bin/qmllint'
+with tempfile.TemporaryDirectory(prefix='trackpad-plus-lint-') as directory:
+    (Path(directory) / 'qs').symlink_to('/usr/share/omarchy/shell', target_is_directory=True)
+    result = subprocess.run([lint, '-I', directory, '--json', '-',
+                             *map(str, sorted(repo.glob('*.qml')))],
+                            capture_output=True, text=True, timeout=30)
+    if not result.stdout:
+        raise SystemExit(result.stderr or 'qmllint produced no results')
+    report = json.loads(result.stdout)
+    failures = []
+    known = 0
+    for source in report['files']:
+        for warning in source.get('warnings', []):
+            if warning['type'] == 'info':
+                continue
+            message = warning['message']
+            host_property = warning['id'] == 'missing-property' and re.fullmatch(
+                r'Member "(foreground|fontFamily|body|caption|controlGap|display|heading|rowPaddingX|title)" not found on type "QObject"', message)
+            host_signal = warning['id'] == 'signal-handler-parameters' and message == (
+                'Type QProcess::ExitStatus of parameter exitStatus in signal called exited was not found, '
+                'but is required to compile onExited. Did you add all imports and dependencies?')
+            if Path(source['filename']).name == 'Panel.qml' and warning['type'] == 'warning' and (host_property or host_signal):
+                known += 1
+            else:
+                failures.append(f"{source['filename']}:{warning['line']}: {message}")
+    if failures:
+        raise SystemExit('\n'.join(failures))
+    if result.returncode:
+        raise SystemExit(result.stderr or f'qmllint exited {result.returncode}')
+    print(f"qmllint passed for {len(report['files'])} QML sources; {known} known host metadata diagnostics (dynamic bar/style properties, QProcess::ExitStatus).")

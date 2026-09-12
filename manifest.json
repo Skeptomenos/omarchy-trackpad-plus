@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "awkent01.touchpad",
-  "name": "Touchpad",
-  "version": "1.0.0",
-  "author": "awkent01",
-  "description": "Per-device touchpad controls: pointer acceleration, speed, scrolling and tapping",
+  "id": "davefano.trackpad-plus",
+  "name": "Trackpad Plus",
+  "version": "2.0.0",
+  "author": "David Fano",
+  "description": "Fine-grained, per-device trackpad controls and pointer-feel tuning for Omarchy.",
   "kinds": [
     "bar-widget"
   ],
@@ -12,9 +12,10 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Touchpad",
-    "description": "Per-device touchpad controls: pointer acceleration, speed, scrolling and tapping",
+    "displayName": "Trackpad Plus",
+    "description": "Fine-grained, per-device trackpad controls and pointer-feel tuning for Omarchy.",
     "category": "Input",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }
