@@ -63,12 +63,13 @@ function parseTouchpadDevice(json) {
   return ""
 }
 
-// Clamp scroll factor to [0.1, 2.0] and round to 1 decimal.
+// Fine steps below 0.1 are useful on sensitive trackpads.
 function clampScrollFactor(value) {
-  var v = Number(value) || 0.4
-  if (v < 0.1) v = 0.1
+  var v = Number(value)
+  if (!isFinite(v)) v = 0.4
+  if (v < 0.01) v = 0.01
   if (v > 2.0) v = 2.0
-  return Math.round(v * 10) / 10
+  return Math.round(v * 100) / 100
 }
 
 // Label for the current scroll speed. Rendered live beside the number while

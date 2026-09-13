@@ -56,7 +56,7 @@ class TrackpadTests(unittest.TestCase):
             self.assertEqual(json.loads(m.STATE.read_text()),updated)
 
     def test_invalid_settings_and_names_rejected_before_apply(self):
-        for key,value in [('sensitivity',9),('scroll_factor',float('nan')),('enabled','false'),('unknown',True)]:
+        for key,value in [('sensitivity',9),('scroll_factor',float('nan')),('scroll_factor',0.009),('scroll_factor',2.01),('enabled','false'),('unknown',True)]:
             with patch.object(m,'hypr') as run, self.assertRaises(ValueError):m.change(self.state,'apple',key,value)
             run.assert_not_called()
         with self.assertRaises(ValueError):m.validate_name('bad" }); os.execute("x")')

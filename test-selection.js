@@ -18,7 +18,7 @@ function context() {
     selectedDevice: 'apple', pendingActions: [], settingsError: '',
     editGeneration: 0, stateGeneration: 0, refreshPending: false,
     actionProc: { running: false }, stateProc: { running: false }, backend: 'trackpads.py',
-    Model: { clampSensitivity: x => x },
+    Model: require('./Model.js'),
     Curve: require('./Curve.js'), previousFeels: {}, curveEditor: {},
     scrollDebounce: { running: false, stop() { this.running = false; } },
     pointerDebounce: { running: false, stop() { this.running = false; } }
@@ -128,7 +128,23 @@ function context() {
   assert.match(qml, /Qt\.callLater\(function\(\) \{ root\.finishStateRead\(code\) \}\)/);
   assert.match(qml, /Qt\.callLater\(function\(\) \{ root\.finishAction\(code\) \}\)/);
 }
-console.log('Passed: device selection, stale-read rejection, debounce ordering, timeout recovery, and IPC configuration.');
+{
+  const ctx = context();
+  ctx.scrollDebounce.restart = function() { this.running = true; };
+  ctx.setScrollFactor(0.05);
+  ctx.focusSection = 'scroll';
+  ctx.moveCursorH(-1);
+  assert.equal(ctx.scrollFactor, 0.04);
+  ctx.selectDevice('dell'); // Flush the precise value to the original device.
+  assert.equal(JSON.parse(ctx.actionProc.command.at(-1)), 0.04);
+  assert.equal(ctx.actionProc.command.at(-3), 'apple');
+  assert.equal(ctx.scrollFactor, 0.2);
+  ctx.setScrollFactor(0);
+  assert.equal(ctx.scrollFactor, 0.01);
+  ctx.setScrollFactor(0.056);
+  assert.equal(ctx.scrollFactor, 0.06);
+}
+console.log('Passed: device selection, fine scroll steps, stale-read rejection, debounce ordering, timeout recovery, and IPC configuration.');
 
 {
   const ctx = context();

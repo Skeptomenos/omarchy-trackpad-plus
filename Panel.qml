@@ -204,7 +204,7 @@ Panel {
       var next = Math.max(0, Math.min(devices.length - 1, index + delta))
       if (devices[next]) selectDevice(devices[next].id)
     } else if (focusSection === "scroll") {
-      adjustScrollFactor(delta > 0 ? 0.1 : -0.1)
+      adjustScrollFactor(delta > 0 ? 0.01 : -0.01)
     } else if (focusSection === "pointer") {
       adjustPointerSpeed(delta > 0 ? 0.1 : -0.1)
     }
@@ -710,7 +710,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               text: {
                 var v = scrollSlider.dragging ? scrollSlider.liveValue : root.scrollFactor
-                return Model.scrollSpeedLabel(v) + "  " + v.toFixed(1)
+                return Model.scrollSpeedLabel(v) + "  " + v.toFixed(2) + "×"
               }
               color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
@@ -740,14 +740,14 @@ Panel {
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.heading
-                opacity: root.scrollFactor <= 0.1 ? 0.3 : 1.0
+                opacity: root.scrollFactor <= 0.01 ? 0.3 : 1.0
               }
 
               MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.adjustScrollFactor(-0.1)
+                onClicked: root.adjustScrollFactor(-0.01)
                 onContainsMouseChanged: if (containsMouse) {
                   root.cursorActive = true
                   root.focusSection = "scroll"
@@ -774,9 +774,9 @@ Panel {
                 anchors.fill: parent
                 anchors.leftMargin: Style.space(6)
                 anchors.rightMargin: Style.space(6)
-                minimum: 0.1
+                minimum: 0.01
                 maximum: 2.0
-                step: 0.1
+                step: 0.01
                 value: root.scrollFactor
                 onMoved: function(v) { root.setScrollFactor(v) }
                 onReleased: function(v) {
@@ -819,7 +819,7 @@ Panel {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.adjustScrollFactor(0.1)
+                onClicked: root.adjustScrollFactor(0.01)
                 onContainsMouseChanged: if (containsMouse) {
                   root.cursorActive = true
                   root.focusSection = "scroll"

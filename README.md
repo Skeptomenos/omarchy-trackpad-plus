@@ -17,7 +17,7 @@ The original project and this derivative are licensed under the MIT License.
 ## Controls
 
 - Enable or disable the selected trackpad.
-- Scroll speed (0.1–2.0) and pointer speed (−1.0–1.0).
+- Scroll speed (0.01–2.00×, in 0.01 steps) and pointer speed (−1.0–1.0).
 - Pointer feel: System (adaptive), Flat, Mac-inspired, and Custom profiles.
 - Visual acceleration editor with draggable precision, acceleration start/end, and fast-swipe
   handles, keyboard adjustment, target practice, and Restore previous.

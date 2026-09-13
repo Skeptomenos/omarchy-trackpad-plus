@@ -128,6 +128,21 @@ else:
             self.assertIn('sensitivity = -0.4', generated.read_text())
             self.assertIn('davefano.trackpad-plus', generated.read_text())
 
+    def test_slow_scrolling_persists_without_changing_pointer_curve(self):
+        self.call('state')
+        value = {'profile': 'custom', 'curve': {'precision': 0.05, 'start': 0.8, 'end': 2.8, 'fast': 0.85}}
+        before = self.call('set', 'apple', 'pointer_feel', json.dumps(value))
+        original = next(d for d in before['devices'] if d['id'] == 'apple')
+        for factor in [0.05, 0.01]:
+            after = self.call('set', 'apple', 'scroll_factor', str(factor))
+            self.assertEqual(after, self.call('state'))
+            apple = next(d for d in after['devices'] if d['id'] == 'apple')
+            expected = dict(original['settings'], scroll_factor=factor)
+            self.assertEqual(apple['settings'], expected)
+            self.assertEqual(apple['previous_pointer_feel'], original['previous_pointer_feel'])
+            self.assertEqual(next(d for d in after['devices'] if d['id'] == 'dell'),
+                             next(d for d in before['devices'] if d['id'] == 'dell'))
+
 
 if __name__ == '__main__':
     unittest.main()
