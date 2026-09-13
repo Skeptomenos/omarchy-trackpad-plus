@@ -34,7 +34,7 @@ function sampledGain(curve, speed) {
 function adjust(curve, handle, value, precise) {
   var next = copy(curve)
   if (handle === 0) {
-    next.precision = Math.max(0.02, Math.min(1.5, value))
+    next.precision = Math.max(0.01, Math.min(1.5, value))
     next.fast = Math.max(next.fast, next.precision)
   } else if (handle === 1) {
     var start = Math.max(0, Math.min(next.end - 0.2, value))

@@ -19,7 +19,7 @@ GENERATED = STATE_ROOT / 'omarchy/toggles/hypr/zz-local-touchpads.lua'
 BOOLS = {'enabled', 'natural_scroll', 'tap_to_click', 'disable_while_typing', 'clickfinger_behavior'}
 RANGES = {'sensitivity': (-1, 1), 'scroll_factor': (0.01, 2)}
 DEFAULT_CURVE = {'precision': 0.3, 'start': 0.8, 'end': 2.8, 'fast': 1.6}
-CURVE_RANGES = {'precision': (0.02, 1.5), 'start': (0, 3.8), 'end': (0.2, 4), 'fast': (0.02, 3.5)}
+CURVE_RANGES = {'precision': (0.01, 1.5), 'start': (0, 3.8), 'end': (0.2, 4), 'fast': (0.01, 3.5)}
 
 
 def validate_curve(value):

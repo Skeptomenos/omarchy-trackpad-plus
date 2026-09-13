@@ -45,6 +45,8 @@ click the number and press Up/Down, click its small arrow buttons, or type a val
 and press Enter. Gain steps are 0.001×; threshold steps are one percentage point.
 Hold Shift with ↑/↓ for 10× larger steps: 0.01× gain or 10 percentage points.
 Typed values allow four decimal places for gain and two for percentages.
+Precision gain can go down to 0.01× for sensitive trackpads. Fast-swipe gain
+can also reach 0.01×, but cannot be lower than precision gain.
 Apply also commits any typed value before sending the curve.
 The shaded region holds a steady low gain for
 fine corrections. Start/end handles move in small fixed increments. Tab between

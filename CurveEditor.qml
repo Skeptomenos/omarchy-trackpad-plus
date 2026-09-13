@@ -84,7 +84,7 @@ FocusScope {
     readonly property real curveValue: controlIndex === 0 ? editor.draft.curve.precision
       : controlIndex === 1 ? editor.draft.curve.start
       : controlIndex === 2 ? editor.draft.curve.end : editor.draft.curve.fast
-    readonly property real minimum: controlIndex === 0 ? 0.02 : controlIndex === 1 ? 0
+    readonly property real minimum: controlIndex === 0 ? 0.01 : controlIndex === 1 ? 0
       : controlIndex === 2 ? editor.draft.curve.start + 0.2 : editor.draft.curve.precision
     readonly property real maximum: controlIndex === 0 ? 1.5
       : controlIndex === 1 ? editor.draft.curve.end - 0.2 : controlIndex === 2 ? 4 : 3.5

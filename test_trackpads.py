@@ -106,6 +106,8 @@ class TrackpadTests(unittest.TestCase):
 
     def test_invalid_curve_is_rejected_without_touching_compositor(self):
         for curve in [None, {}, dict(m.DEFAULT_CURVE, precision=True),
+                      dict(m.DEFAULT_CURVE, precision=0.009),
+                      dict(m.DEFAULT_CURVE, precision=0.01, fast=0.009),
                       dict(m.DEFAULT_CURVE, fast=float('inf')),
                       dict(m.DEFAULT_CURVE, fast=0.2),
                       dict(m.DEFAULT_CURVE, start=2.7),
@@ -158,7 +160,7 @@ class TrackpadTests(unittest.TestCase):
 
     def test_native_libinput_accepts_curve_and_rejects_old_81_point_payload(self):
         m.validate_native_curve(m.DEFAULT_CURVE)
-        slow = dict(m.DEFAULT_CURVE, precision=0.02, fast=0.02)
+        slow = dict(m.DEFAULT_CURVE, precision=0.01, fast=0.01)
         m.validate_native_curve(slow)
         old_payload = 'custom 0.05 ' + ' '.join(str(i * 0.001) for i in range(81))
         with self.assertRaisesRegex(ValueError, 'libinput rejected.*81 points'):
