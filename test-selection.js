@@ -197,3 +197,25 @@ console.log('Passed: device selection, fine scroll steps, stale-read rejection, 
   assert.equal(ctx.pendingActions.length, 128, 'pending actions must have a fixed memory bound');
   assert.match(ctx.settingsError, /Too many/);
 }
+
+{
+  const ctx = context();
+  ctx.actionProc.running = true;
+  ctx.scrollDebounce.running = true;
+  ctx.pendingScrollFactor = 0.4;
+  ctx.setScrollScale(3);
+  assert.equal(ctx.pendingActions[0].option, 'scroll_factor');
+  assert.equal(ctx.pendingActions[0].value, 0.4, 'pending edit must use its original scale');
+  assert.equal(ctx.pendingActions[1].option, 'scroll_scale');
+  assert.equal(ctx.pendingActions[1].value, 3);
+  assert.equal(ctx.devices[0].settings.scroll_factor, 1.2);
+  ctx.loadSelection();
+  assert.ok(Math.abs(ctx.scrollFactor - 0.4) < 1e-9);
+  ctx.pendingScrollFactor = 1;
+  ctx.commitScrollFactor();
+  assert.equal(ctx.pendingActions[2].value, 3, 'full slider reaches the configured scale');
+  ctx.selectDevice('dell');
+  assert.equal(ctx.scrollScale, 1);
+  assert.equal(ctx.scrollFactor, 0.2);
+  assert.equal(ctx.Model.clampScrollFactor(3), 1);
+}

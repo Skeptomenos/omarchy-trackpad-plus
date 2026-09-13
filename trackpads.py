@@ -21,10 +21,10 @@ DIRECTORY = STATE_ROOT / 'omarchy/local-touchpads'
 STATE = DIRECTORY / 'settings.json'
 GENERATED = STATE_ROOT / 'omarchy/toggles/hypr/zz-local-touchpads.lua'
 BOOLS = {'enabled', 'natural_scroll', 'tap_to_click', 'disable_while_typing', 'clickfinger_behavior'}
-RANGES = {'sensitivity': (-1, 1), 'scroll_factor': (0.01, 2)}
+RANGES = {'sensitivity': (-1, 1), 'scroll_factor': (0.001, 10), 'scroll_scale': (0.1, 10)}
 DEFAULT_CURVE = {'precision': 0.3, 'start': 0.8, 'end': 2.8, 'fast': 1.6}
 MAX_STATE_BYTES = 1024 * 1024
-CURVE_RANGES = {'precision': (0.01, 1.5), 'start': (0, 3.8), 'end': (0.2, 4), 'fast': (0.01, 3.5)}
+CURVE_RANGES = {'precision': (0.01, 10), 'start': (0, 3.8), 'end': (0.2, 4), 'fast': (0.01, 10)}
 
 
 def validate_curve(value):
@@ -178,7 +178,7 @@ def lua_for(groups):
         fields = []
         for key, value in sorted(group['settings'].items()):
             validate_setting(key, value)
-            if key in ('curve', 'curve_preset'):
+            if key in ('curve', 'curve_preset', 'scroll_scale'):
                 continue  # Editor metadata is never emitted as a Hyprland option.
             if key == 'accel_profile' and value == 'custom':
                 value = curve_profile(group['settings'].get('curve', DEFAULT_CURVE))
@@ -294,7 +294,7 @@ def state_lock():
 def validate_state(state):
     if not isinstance(state, dict) or set(state) != {'version', 'devices'}:
         raise ValueError('Invalid trackpad state structure')
-    if type(state['version']) is not int or state['version'] not in (1, 2, 3):
+    if type(state['version']) is not int or state['version'] not in (1, 2, 3, 4):
         raise ValueError('Unsupported trackpad state version; saved settings were not changed')
     devices = state['devices']
     if not isinstance(devices, dict) or len(devices) > 128:
@@ -317,10 +317,14 @@ def validate_state(state):
                 raise ValueError('Duplicate trackpad name')
             all_names.add(name)
         settings = group.get('settings')
-        if not isinstance(settings, dict) or not (BOOLS | set(RANGES)) <= set(settings):
+        if not isinstance(settings, dict) or not (BOOLS | {'sensitivity', 'scroll_factor'}) <= set(settings):
             raise ValueError('Missing trackpad settings')
         for option, value in settings.items():
             validate_setting(option, value)
+        scale = settings.get('scroll_scale', max(1, settings['scroll_factor']))
+        normalized = settings['scroll_factor'] / scale
+        if not 0.01 - 1e-9 <= normalized <= 1 + 1e-9:
+            raise ValueError('Scroll speed must be between 0.01 and 1.00 of the device scale')
         if 'previous_pointer_feel' in group:
             validate_change('pointer_feel', group['previous_pointer_feel'])
     return state
@@ -437,12 +441,15 @@ def snapshot(state, live):
 
 def migrate(state):
     """The previous panel inherited the driver's default adaptive profile."""
-    if not isinstance(state, dict) or type(state.get('version')) is not int or state['version'] not in (1, 2, 3):
+    if not isinstance(state, dict) or type(state.get('version')) is not int or state['version'] not in (1, 2, 3, 4):
         raise ValueError('Unsupported trackpad state version; saved settings were not changed')
     updated = copy.deepcopy(state)
     for group in updated['devices'].values():
         settings = group['settings']
         settings.setdefault('accel_profile', 'adaptive')
+        # Store the effective Hyprland value unchanged; scale is UI metadata.
+        validate_setting('scroll_factor', settings['scroll_factor'])
+        settings.setdefault('scroll_scale', max(1, settings['scroll_factor']))
         curve = settings.get('curve')
         if isinstance(curve, dict) and set(curve) == {'precision', 'transition', 'fast'}:
             transition = curve['transition']
@@ -459,7 +466,7 @@ def migrate(state):
                                                'end': 2 * old['transition'], 'fast': old['fast']})
             if previous['profile'] == 'mac':
                 previous['profile'] = 'custom'
-    updated['version'] = 3
+    updated['version'] = 4
     return validate_state(updated)
 
 
@@ -484,10 +491,13 @@ def change(state, key, option, value):
             'curve': copy.deepcopy(settings.get('curve', DEFAULT_CURVE)),
         }
         settings['accel_profile'] = 'custom' if profile in ('mac', 'custom') else profile
-        settings['curve'] = dict(DEFAULT_CURVE if profile == 'mac' else curve)
+        settings['curve'] = dict(curve)  # The editor sizes new presets to the device range.
         settings['curve_preset'] = 'mac' if profile == 'mac' else 'custom'
     else:
         validate_setting(option, value)
+        if option == 'scroll_scale':
+            old_scale = settings.get('scroll_scale', max(1, settings['scroll_factor']))
+            settings['scroll_factor'] = round(settings['scroll_factor'] * value / old_scale, 6)
         settings[option] = value
     validate_state(updated)
     # Validate every persisted curve before touching the compositor or disk.

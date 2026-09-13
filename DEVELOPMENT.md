@@ -11,6 +11,18 @@ cd omarchy-trackpad-plus
 notices. Contributions should describe the observable behavior and validation.
 Do not commit runtime settings, private configuration, caches, or backups.
 
+## Release versions
+
+Use `YYYY.MM.DD.N`, starting with `2026.09.13.0`. The date is the release
+date, with zero-padded month and day; `N` starts at 0 and increases for each
+release on that date. Compare the four components numerically, not as text
+(revision 10 follows revision 9). Never reuse a published version or move the
+date backward.
+
+Before publishing a release, update `version` in `manifest.json`. The main
+widget reads that file for its footer, so there is only one version to update.
+This release identifier is separate from the backend's settings schema version.
+
 ## Architecture
 
 - `Panel.qml`: Omarchy bar widget, device selection, debounced action queue,
@@ -33,6 +45,15 @@ Lua omits these groups. Missing `configured` means true for compatibility with
 existing saved settings. Failed first edits restore the original configuration
 with a config-only reload because reapplying an empty Lua block cannot remove a
 runtime device override.
+Scroll scale is per-group settings metadata. The backend stores the effective
+`scroll_factor`, and the panel displays that value divided by `scroll_scale`.
+Scale changes rescale the effective value in the same journaled transaction;
+queued slider edits must commit under their old scale first. Schema 4 migration
+adds scale metadata without changing effective factors or generated Lua.
+The editor also uses that scale as its vertical gain limit. Saved curves stay in
+absolute gain units; changing the axis does not rescale them. Newly selected
+Mac-inspired presets fit the available range, and the backend applies the exact
+validated curve supplied by the editor, including when restoring a preset.
 Do not change saved group IDs or historical state paths without a migration.
 
 ## Complete automated suite

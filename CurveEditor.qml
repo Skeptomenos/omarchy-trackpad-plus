@@ -10,6 +10,8 @@ FocusScope {
   required property color accent
   required property string fontFamily
   property real uiScale: 1
+  property real gainMaximum: 1
+  readonly property bool curveExceedsRange: draft.curve.fast > gainMaximum
   property var saved: ({ profile: "adaptive", curve: Curve.defaults() })
   property var draft: Curve.copy(saved)
   property string deviceLabel: "Trackpad"
@@ -34,12 +36,13 @@ FocusScope {
     hits = 0
   }
   function choose(profile) {
-    draft = { profile: profile, curve: profile === "mac" ? Curve.defaults() : Curve.copy(draft.curve) }
+    draft = { profile: profile, curve: profile === "mac" ? Curve.presetForScale(gainMaximum) : Curve.copy(draft.curve) }
   }
   function adjust(handle, value, precise) {
-    draft = { profile: "custom", curve: Curve.adjust(draft.curve, handle, value, precise) }
+    draft = { profile: "custom", curve: Curve.adjust(draft.curve, handle, value, precise, gainMaximum) }
   }
   onDraftChanged: graph.requestPaint()
+  onGainMaximumChanged: graph.requestPaint()
   onForegroundChanged: graph.requestPaint()
   onAccentChanged: graph.requestPaint()
   Keys.onEscapePressed: backRequested()
@@ -87,8 +90,8 @@ FocusScope {
       : controlIndex === 2 ? editor.draft.curve.end : editor.draft.curve.fast
     readonly property real minimum: controlIndex === 0 ? 0.01 : controlIndex === 1 ? 0
       : controlIndex === 2 ? editor.draft.curve.start + 0.2 : editor.draft.curve.precision
-    readonly property real maximum: controlIndex === 0 ? 1.5
-      : controlIndex === 1 ? editor.draft.curve.end - 0.2 : controlIndex === 2 ? 4 : 3.5
+    readonly property real maximum: controlIndex === 0 ? Math.max(editor.gainMaximum, editor.draft.curve.precision)
+      : controlIndex === 1 ? editor.draft.curve.end - 0.2 : controlIndex === 2 ? 4 : Math.max(editor.gainMaximum, editor.draft.curve.fast)
     objectName: "curveSpinner" + controlIndex
     from: Math.ceil(minimum * units * factor - 0.000001)
     to: Math.floor(maximum * units * factor + 0.000001)
@@ -208,16 +211,17 @@ FocusScope {
       Label { text: "Cursor travel (×)"; opacity: 0.7; font.pixelSize: 11 * editor.uiScale }
       Item {
         id: plot
+        objectName: "curvePlot"
         width: parent.width
         height: 190 * editor.uiScale
-        readonly property real leftInset: 30 * editor.uiScale
+        readonly property real leftInset: 40 * editor.uiScale
         readonly property real rightInset: 12 * editor.uiScale
         readonly property real topInset: 12 * editor.uiScale
         readonly property real bottomInset: 22 * editor.uiScale
         readonly property real plotWidth: width - leftInset - rightInset
         readonly property real plotHeight: height - topInset - bottomInset
         function px(speed) { return leftInset + speed / 4 * plotWidth }
-        function py(gain) { return topInset + (1 - gain / 3.5) * plotHeight }
+        function py(gain) { return topInset + (1 - Math.max(0, Math.min(1, gain / editor.gainMaximum))) * plotHeight }
         Canvas {
           id: graph
           anchors.fill: parent
@@ -232,11 +236,13 @@ FocusScope {
             ctx.lineWidth = 1
             ctx.font = (10 * editor.uiScale) + "px sans-serif"
             ctx.textAlign = "right"
-            for (var n = 0; n <= 3; n++) {
+            var divisions = editor.gainMaximum === 3 ? 3 : 4
+            for (var tick = 0; tick <= divisions; tick++) {
+              var n = editor.gainMaximum * tick / divisions
               ctx.strokeStyle = Qt.alpha(editor.foreground, n === 1 ? 0.3 : 0.12)
               ctx.beginPath(); ctx.moveTo(plot.px(0), plot.py(n)); ctx.lineTo(plot.px(4), plot.py(n)); ctx.stroke()
               ctx.fillStyle = Qt.alpha(editor.foreground, 0.65)
-              ctx.fillText(n + "×", plot.leftInset - 7 * editor.uiScale, plot.py(n) + 4 * editor.uiScale)
+              ctx.fillText(Number(n.toFixed(2)) + "×", plot.leftInset - 7 * editor.uiScale, plot.py(n) + 4 * editor.uiScale)
             }
             ctx.strokeStyle = editor.accent
             ctx.lineWidth = 2.5 * editor.uiScale
@@ -300,13 +306,20 @@ FocusScope {
               onPositionChanged: function(mouse) {
                 if (!pressed) return
                 var p = mapToItem(plot, mouse.x, mouse.y)
-                editor.adjust(handle.index, handle.horizontal ? (p.x - plot.leftInset) / plot.plotWidth * 4 : (1 - (p.y - plot.topInset) / plot.plotHeight) * 3.5)
+                editor.adjust(handle.index, handle.horizontal ? (p.x - plot.leftInset) / plot.plotWidth * 4 : (1 - (p.y - plot.topInset) / plot.plotHeight) * editor.gainMaximum)
               }
             }
           }
         }
       }
       Label { text: "Finger speed →"; anchors.horizontalCenter: parent.horizontalCenter; opacity: 0.65; font.pixelSize: 11 * editor.uiScale }
+      Label {
+        visible: editor.curveExceedsRange
+        width: parent.width
+        text: "This saved curve exceeds the chart range. Increase Device scale to see it fully; its values have been preserved."
+        font.pixelSize: 11 * editor.uiScale
+        opacity: 0.7
+      }
       Row {
         width: parent.width
         spacing: 6 * editor.uiScale

@@ -24,11 +24,34 @@ Rectangle {
     when: windowShown
     function init() {
       editor.saved = {profile: "adaptive", curve: Curve.defaults()}
+      editor.gainMaximum = 3.5
       editor.busy = false
       editor.settingsError = ""
       editor.canRestore = false
       editor.begin()
       applied.clear(); restored.clear(); back.clear()
+    }
+    function test_device_scale_controls_chart_and_gain_inputs() {
+      editor.saved = {profile: "custom", curve: {precision: 0.01, start: 0, end: 4, fast: 0.55}}
+      editor.begin()
+      var original = JSON.stringify(editor.draft)
+      var plot = findChild(editor, "curvePlot")
+      editor.gainMaximum = 1
+      compare(plot.py(1), plot.topInset)
+      compare(findChild(editor, "curveSpinner3").to, 10000)
+      editor.gainMaximum = 3
+      compare(plot.py(3), plot.topInset)
+      compare(findChild(editor, "curveSpinner3").to, 30000)
+      compare(JSON.stringify(editor.draft), original)
+      compare(applied.count, 0)
+      editor.adjust(3, 9)
+      compare(editor.draft.curve.fast, 3)
+      editor.gainMaximum = 1
+      verify(editor.curveExceedsRange)
+      compare(editor.draft.curve.fast, 3)
+      editor.choose("mac")
+      compare(editor.draft.curve.fast, 1)
+      verify(!editor.curveExceedsRange)
     }
     function test_failed_save_is_not_labelled_applied() {
       editor.settingsError = "Compositor unavailable"

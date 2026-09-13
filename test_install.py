@@ -125,6 +125,18 @@ else:
         self.assertFalse(state.with_suffix('.pending.json').exists())
         self.assertEqual((self.root / 'reload.log').read_text(), 'config-only')
 
+    def test_scroll_scale_survives_restart_and_applies_to_actual_factor(self):
+        self.call('state')
+        self.call('set', 'apple', 'scroll_factor', '1')
+        after = self.call('set', 'apple', 'scroll_scale', '3')
+        apple = next(row for row in after['devices'] if row['id'] == 'apple')
+        self.assertEqual(apple['settings']['scroll_scale'], 3)
+        self.assertEqual(apple['settings']['scroll_factor'], 3)
+        self.assertEqual(self.call('state'), after)
+        rules = self.root / 'state/omarchy/toggles/hypr/zz-local-touchpads.lua'
+        self.assertIn('scroll_factor = 3', rules.read_text())
+        self.assertNotIn('scroll_scale', rules.read_text())
+
     def test_fresh_install_initializes_and_persists_independent_settings(self):
         before = self.call('state')  # The same first command used by Panel.qml.
         self.assertEqual({d['id'] for d in before['devices']}, {'apple', 'dell'})

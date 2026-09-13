@@ -61,7 +61,7 @@ class TrackpadTests(unittest.TestCase):
         self.assertEqual(m.read_state_file(m.STATE), 'safe')
 
     def test_future_and_malformed_state_is_rejected(self):
-        for state in [dict(self.state, version=4), dict(self.state, version=True),
+        for state in [dict(self.state, version=5), dict(self.state, version=True),
                       dict(self.state, extra='unsupported')]:
             with self.assertRaises(ValueError):
                 m.migrate(state)
@@ -146,16 +146,76 @@ class TrackpadTests(unittest.TestCase):
         self.assertIn('sensitivity = 0.1', run.call_args.args[1])
         self.assertTrue(m.STATE.with_suffix('.pending.json').exists())
 
+    def test_scroll_scale_changes_only_selected_group_and_preserves_pointer(self):
+        state = m.migrate(self.state)
+        state['devices']['apple']['settings']['scroll_factor'] = 1
+        state['devices']['apple']['settings'].update(accel_profile='custom', curve=m.DEFAULT_CURVE)
+        with patch.object(m, 'hypr') as run:
+            updated = m.change(state, 'apple', 'scroll_scale', 3)
+        settings = updated['devices']['apple']['settings']
+        self.assertEqual(settings['scroll_factor'], 3)
+        self.assertEqual(settings['scroll_scale'], 3)
+        self.assertEqual(settings['curve'], m.DEFAULT_CURVE)
+        self.assertEqual(settings['sensitivity'], state['devices']['apple']['settings']['sensitivity'])
+        self.assertEqual(updated['devices']['dell'], state['devices']['dell'])
+        self.assertIn('scroll_factor = 3', run.call_args.args[1])
+        self.assertNotIn('scroll_scale', run.call_args.args[1])
+        self.assertEqual(json.loads(m.STATE.read_text()), updated)
+        with patch.object(m, 'hypr'):
+            restored = m.change(updated, 'apple', 'scroll_scale', 1)
+        self.assertEqual(restored, state)
+
+    def test_scroll_scale_migration_preserves_effective_values_and_lua(self):
+        for factor in [0.01, 0.05, 0.5, 1, 1.5, 2]:
+            state = m.migrate(self.state)
+            state['version'] = 3
+            for group in state['devices'].values():
+                group['settings'].pop('scroll_scale')
+                group['settings']['scroll_factor'] = factor
+            expected = m.lua_for(state['devices'])
+            updated = m.migrate(state)
+            self.assertEqual(m.lua_for(updated['devices']), expected)
+            for group in updated['devices'].values():
+                self.assertEqual(group['settings']['scroll_factor'], factor)
+                self.assertEqual(group['settings']['scroll_scale'], max(1, factor))
+            self.assertEqual(m.migrate(updated), updated)
+
+    def test_scroll_scale_bounds_and_save_failure(self):
+        state = m.migrate(self.state)
+        for value in [0, 0.09, 10.01, True, '3', float('nan')]:
+            with patch.object(m, 'hypr') as run, self.assertRaises(ValueError):
+                m.change(state, 'apple', 'scroll_scale', value)
+            run.assert_not_called()
+        with patch.object(m, 'hypr'), patch.object(m, 'save', side_effect=[OSError('disk full'), None]):
+            with self.assertRaises(OSError):
+                m.change(state, 'apple', 'scroll_scale', 3)
+        self.assertEqual(state['devices']['apple']['settings']['scroll_scale'], 1)
+        with patch.object(m, 'hypr'):
+            slow = m.change(state, 'apple', 'scroll_scale', 0.1)
+            slow = m.change(slow, 'apple', 'scroll_factor', 0.001)
+        self.assertAlmostEqual(slow['devices']['apple']['settings']['scroll_factor'] / 0.1, 0.01)
+
+    def test_scaled_mac_preset_and_wider_curve_are_applied_as_displayed(self):
+        curve = dict(m.DEFAULT_CURVE, precision=0.1875, fast=1)
+        with patch.object(m, 'hypr') as run:
+            updated = m.change(m.migrate(self.state), 'apple', 'pointer_feel', {'profile': 'mac', 'curve': curve})
+        self.assertEqual(updated['devices']['apple']['settings']['curve'], curve)
+        self.assertIn(m.curve_profile(curve), run.call_args.args[1])
+        m.validate_native_curve(dict(m.DEFAULT_CURVE, precision=3, fast=10))
+        with self.assertRaises(ValueError):
+            m.validate_curve(dict(m.DEFAULT_CURVE, fast=10.01))
+
     def test_groups_two_apple_interfaces_without_mouse(self):
         self.assertEqual(set(self.groups),{'apple','dell'})
         self.assertEqual(len(self.groups['apple']['names']),2)
 
     def test_acceleration_migration_preserves_existing_settings(self):
         migrated = m.migrate(self.state)
-        self.assertEqual(migrated['version'], 3)
+        self.assertEqual(migrated['version'], 4)
         for key in self.groups:
             settings = dict(migrated['devices'][key]['settings'])
             self.assertEqual(settings.pop('accel_profile'), 'adaptive')
+            self.assertEqual(settings.pop('scroll_scale'), 1)
             self.assertEqual(settings, self.groups[key]['settings'])
         migrated['devices']['apple']['settings']['accel_profile'] = 'flat'
         self.assertEqual(m.migrate(migrated), migrated)
@@ -184,7 +244,7 @@ class TrackpadTests(unittest.TestCase):
             self.assertEqual(json.loads(m.STATE.read_text()),updated)
 
     def test_invalid_settings_and_names_rejected_before_apply(self):
-        for key,value in [('sensitivity',9),('scroll_factor',float('nan')),('scroll_factor',0.009),('scroll_factor',2.01),('enabled','false'),('unknown',True)]:
+        for key,value in [('sensitivity',9),('scroll_factor',float('nan')),('scroll_factor',0.009),('scroll_factor',10.01),('enabled','false'),('unknown',True)]:
             with patch.object(m,'hypr') as run, self.assertRaises(ValueError):m.change(self.state,'apple',key,value)
             run.assert_not_called()
         with self.assertRaises(ValueError):m.validate_name('bad" }); os.execute("x")')

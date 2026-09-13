@@ -68,7 +68,7 @@ function clampScrollFactor(value) {
   var v = Number(value)
   if (!isFinite(v)) v = 0.4
   if (v < 0.01) v = 0.01
-  if (v > 2.0) v = 2.0
+  if (v > 1.0) v = 1.0
   return Math.round(v * 100) / 100
 }
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "davefano.trackpad-plus",
   "name": "Trackpad Plus",
-  "version": "2.0.3",
+  "version": "2026.09.13.0",
   "author": "David Fano",
   "description": "Fine-grained, per-device trackpad controls and pointer-feel tuning for Omarchy.",
   "kinds": [
