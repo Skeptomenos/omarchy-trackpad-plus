@@ -95,7 +95,12 @@ omarchy plugin add https://github.com/davefano/omarchy-trackpad-plus.git --enabl
 
 For an unattended installation, append `--yes`. The plugin ID is
 `davefano.trackpad-plus`. Settings initialize automatically on the first state
-read. The widget appears when a supported trackpad is detected or remembered.
+read. Newly discovered devices are listed without generating overrides until
+you make their first edit. That edit applies all shown settings for that device;
+initial values come from global defaults and recognized legacy sensitivity rules,
+so review them if you already have custom per-device configuration.
+Existing saved Trackpad Plus settings remain active.
+The widget appears when a supported trackpad is detected or remembered.
 
 To upgrade an installed Git-managed copy:
 
@@ -177,20 +182,40 @@ Settings live under `$XDG_STATE_HOME` (default `~/.local/state`):
 
 The historical filenames are intentional compatibility interfaces, independent
 of the plugin ID. `trackpads.py` serializes operations with a file lock and
-atomically replaces each file. The two files are not one filesystem transaction;
-on a reported save failure the helper attempts to restore the previous rules.
-On the next state read, missing or inconsistent generated rules are rebuilt and
-applied from the saved JSON, which remains authoritative.
+atomically replaces each file. Before a live edit, it records the previous state
+in `local-touchpads/settings.pending.json`. Failed edits attempt rollback; if a
+process is interrupted or rollback fails, the next read restores that snapshot.
+An interrupted edit may therefore need to be applied again. Rolling back a
+device's first edit uses `hyprctl reload config-only` to restore its original
+configuration, without reloading monitors. Without a pending
+edit, missing or inconsistent generated rules are rebuilt from saved JSON.
+These files are not a single filesystem transaction; recovery requires writable
+storage and a responding compositor.
+
+State files must be regular files owned by your user, without hard links or
+write access for other users. State directory paths must not contain symlinks
+(the home directory itself is resolved first). Use an absolute `XDG_STATE_HOME`
+pointing to real, privately writable directories. New files have mode 0600.
+Unsupported state versions are rejected without migrating or overwriting them.
 
 State reads have a 15-second deadline; writes have 10 seconds, followed by a
 2-second forced-kill deadline. Timed-out actions release the queue and report an
-error. Stale poll results are discarded after newer edits. The panel shows saved
+error. Each compositor request also has a four-second deadline and a 1 MiB
+output limit; lock acquisition has a two-second deadline. Consecutive slider
+updates are combined and the pending action queue is limited to 128 entries.
+Stale poll results are discarded after newer edits. The panel shows saved
 settings; external configuration changes are not automatically imported.
+
+Application-specific Hyprland `scroll_touchpad` window rules can override the
+per-device scroll factor. If scrolling changes in some apps but not others,
+check those rules in your configuration. The plugin does not rewrite window
+rules or application settings.
 
 ## Development and testing
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete suite, architecture, and
-live verification checklist. Report bugs through
+live verification checklist. The [release safety review](docs/safety-review.md)
+records tested failure cases and remaining compatibility limits. Report bugs through
 [GitHub Issues](https://github.com/davefano/omarchy-trackpad-plus/issues).
 
 ## Removal

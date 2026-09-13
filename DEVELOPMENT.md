@@ -28,6 +28,11 @@ The `apple` settings group intentionally retains the original grouping of Apple
 Magic Trackpad interfaces and now recognizes the built-in Apple trackpad. These
 Apple devices share settings when connected together. The `dell` ID recognizes
 one known Dell hardware name; other trackpads use their compositor device name.
+New groups have `configured: false` until their first explicit edit; generated
+Lua omits these groups. Missing `configured` means true for compatibility with
+existing saved settings. Failed first edits restore the original configuration
+with a config-only reload because reapplying an empty Lua block cannot remove a
+runtime device override.
 Do not change saved group IDs or historical state paths without a migration.
 
 ## Complete automated suite
@@ -57,7 +62,10 @@ warnings. IPC and live checks cover the installed host interfaces.
 
 Installation tests copy Git-tracked files into temporary storage, use a fake
 compositor, and verify initialization, device isolation, discovery, migration,
-persistence, and recovery from a blocked lock. Stage new runtime source files
+persistence, blocked locks, oversized compositor responses, and recovery after
+terminating a live edit. Backend tests inject failures at each persistence file,
+check recovery journals, reject unsafe state paths and future schemas, and
+exercise repeated file/native operations for descriptor leaks. Stage new runtime source files
 before running them. No real settings are changed by automated tests.
 
 Node tests execute actual Panel.qml functions with controlled callback ordering.
