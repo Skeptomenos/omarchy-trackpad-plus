@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Per-device settings and native pointer curves for Trackpad Plus."""
+from contextlib import contextmanager
 import copy
 import ctypes
 import fcntl
@@ -10,15 +11,19 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
+import secrets
+import selectors
+import stat
+import time
 
-STATE_ROOT = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state')
+STATE_ROOT = Path(os.environ.get('XDG_STATE_HOME') or Path.home().resolve() / '.local/state')
 DIRECTORY = STATE_ROOT / 'omarchy/local-touchpads'
 STATE = DIRECTORY / 'settings.json'
 GENERATED = STATE_ROOT / 'omarchy/toggles/hypr/zz-local-touchpads.lua'
 BOOLS = {'enabled', 'natural_scroll', 'tap_to_click', 'disable_while_typing', 'clickfinger_behavior'}
 RANGES = {'sensitivity': (-1, 1), 'scroll_factor': (0.01, 2)}
 DEFAULT_CURVE = {'precision': 0.3, 'start': 0.8, 'end': 2.8, 'fast': 1.6}
+MAX_STATE_BYTES = 1024 * 1024
 CURVE_RANGES = {'precision': (0.01, 1.5), 'start': (0, 3.8), 'end': (0.2, 4), 'fast': (0.01, 3.5)}
 
 
@@ -53,10 +58,36 @@ def curve_profile(curve):
 
 
 def hypr(*args):
-    result = subprocess.run(['hyprctl', *args], text=True, capture_output=True, timeout=4, check=True)
-    if args[0] == 'eval' and result.stdout.strip() != 'ok':
-        raise RuntimeError(result.stdout.strip() or result.stderr.strip() or 'Hyprland rejected settings')
-    return result.stdout
+    """Bound both runtime and output; kill and reap failed compositor requests."""
+    command = ['hyprctl', *args]
+    deadline = time.monotonic() + 4
+    output = [bytearray(), bytearray()]
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        try:
+            with selectors.DefaultSelector() as streams:
+                streams.register(process.stdout, selectors.EVENT_READ, 0)
+                streams.register(process.stderr, selectors.EVENT_READ, 1)
+                while streams.get_map():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, 4)
+                    for event, _ in streams.select(remaining):
+                        chunk = os.read(event.fd, 65536)
+                        if not chunk:
+                            streams.unregister(event.fileobj)
+                        else:
+                            output[event.data].extend(chunk)
+                            if sum(map(len, output)) > MAX_STATE_BYTES:
+                                raise ValueError('Hyprland response exceeds the 1 MiB limit')
+                code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            stdout, stderr = (part.decode('utf-8', errors='replace') for part in output)
+            if code != 0 or (args[0] in ('eval', 'reload') and stdout.strip() != 'ok'):
+                raise RuntimeError((stderr.strip() or stdout.strip() or 'Hyprland rejected settings')[:2048])
+            return stdout
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
 
 
 def validate_native_profile(profile):
@@ -142,6 +173,8 @@ def lua_for(groups):
     # hyprctl interprets an argument starting with '--' as a CLI flag.
     lines = ['do -- Managed by davefano.trackpad-plus. Change settings in Trackpad Plus.']
     for group in groups.values():
+        if not group.get('configured', True):
+            continue
         fields = []
         for key, value in sorted(group['settings'].items()):
             validate_setting(key, value)
@@ -159,23 +192,191 @@ def lua_for(groups):
     return '\n'.join(lines + ['end']) + '\n'
 
 
-def atomic_write(path, content):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_symlink():
-        raise ValueError('Refusing to replace a symbolic link')
-    fd, temp = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
+@contextmanager
+def state_directory(path, create=False):
+    """Pin each directory with a descriptor; never follow state-path symlinks."""
+    path = Path(path)
+    if not path.is_absolute() or '..' in path.parts:
+        raise ValueError('State paths must be absolute and contain no parent traversal')
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
     try:
-        with os.fdopen(fd, 'w') as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
+        for part in path.parts[1:]:
+            if create:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            shared_sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if info.st_uid not in (0, os.getuid()) or (info.st_mode & 0o022 and not shared_sticky):
+                raise ValueError('State directories must not be writable by other users')
+        if os.fstat(fd).st_mode & 0o022:
+            raise ValueError('State directory must not be shared')
+        yield fd
     finally:
-        if os.path.exists(temp):
-            os.unlink(temp)
+        os.close(fd)
+
+
+def check_file(info):
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_nlink != 1 or info.st_mode & 0o022):
+        raise ValueError('State must be a regular, privately writable file owned by this user')
+
+
+def read_state_file(path):
+    try:
+        with state_directory(path.parent) as directory:
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(fd, 'rb') as stream:
+                check_file(os.fstat(stream.fileno()))
+                raw = stream.read(MAX_STATE_BYTES + 1)
+                if len(raw) > MAX_STATE_BYTES:
+                    raise ValueError('State file exceeds the 1 MiB limit')
+                return raw.decode('utf-8')
+    except FileNotFoundError:
+        return None
+
+
+def atomic_write(path, content):
+    encoded = content.encode('utf-8')
+    if len(encoded) > MAX_STATE_BYTES:
+        raise ValueError('State file exceeds the 1 MiB limit')
+    with state_directory(path.parent, create=True) as directory:
+        try:
+            check_file(os.stat(path.name, dir_fd=directory, follow_symlinks=False))
+        except FileNotFoundError:
+            pass
+        temp = '.' + path.name + '.' + secrets.token_hex(12)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=directory)
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, path.name, src_dir_fd=directory, dst_dir_fd=directory)
+            os.fsync(directory)
+        finally:
+            try:
+                os.unlink(temp, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+
+
+def clear_pending():
+    with state_directory(STATE.parent) as directory:
+        os.unlink(STATE.with_suffix('.pending.json').name, dir_fd=directory)
+        os.fsync(directory)
+
+
+@contextmanager
+def state_lock():
+    with state_directory(DIRECTORY, create=True) as directory:
+        fd = os.open('settings.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     0o600, dir_fd=directory)
+    with os.fdopen(fd, 'r+') as lock:
+        check_file(os.fstat(lock.fileno()))
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('Trackpad settings are busy; try again')
+                time.sleep(0.025)
+        yield
+
+
+def validate_state(state):
+    if not isinstance(state, dict) or set(state) != {'version', 'devices'}:
+        raise ValueError('Invalid trackpad state structure')
+    if type(state['version']) is not int or state['version'] not in (1, 2, 3):
+        raise ValueError('Unsupported trackpad state version; saved settings were not changed')
+    devices = state['devices']
+    if not isinstance(devices, dict) or len(devices) > 128:
+        raise ValueError('Invalid trackpad device list')
+    all_names = set()
+    for key, group in devices.items():
+        validate_name(key)
+        if not isinstance(group, dict) or set(group) - {'id', 'label', 'names', 'settings', 'previous_pointer_feel', 'configured'}:
+            raise ValueError('Invalid trackpad group')
+        if group.get('id') != key or not isinstance(group.get('label'), str) or not 1 <= len(group['label']) <= 128:
+            raise ValueError('Invalid trackpad identity')
+        if 'configured' in group and type(group['configured']) is not bool:
+            raise ValueError('Invalid trackpad configuration status')
+        names = group.get('names')
+        if not isinstance(names, list) or not 1 <= len(names) <= 32:
+            raise ValueError('Invalid trackpad names')
+        for name in names:
+            validate_name(name)
+            if name in all_names:
+                raise ValueError('Duplicate trackpad name')
+            all_names.add(name)
+        settings = group.get('settings')
+        if not isinstance(settings, dict) or not (BOOLS | set(RANGES)) <= set(settings):
+            raise ValueError('Missing trackpad settings')
+        for option, value in settings.items():
+            validate_setting(option, value)
+        if 'previous_pointer_feel' in group:
+            validate_change('pointer_feel', group['previous_pointer_feel'])
+    return state
+
+
+def validate_change(option, value):
+    if option != 'pointer_feel':
+        validate_setting(option, value)
+        return
+    if not isinstance(value, dict) or set(value) != {'profile', 'curve'}:
+        raise ValueError('Expected a pointer profile and curve')
+    if value['profile'] not in ('adaptive', 'flat', 'mac', 'custom'):
+        raise ValueError('Unknown pointer profile')
+    validate_curve(value['curve'])
+
+
+def recover_pending():
+    """An uncleared journal means the last edit did not finish successfully."""
+    raw = read_state_file(STATE.with_suffix('.pending.json'))
+    if raw is None:
+        return
+    pending = json.loads(raw)
+    if not isinstance(pending, dict) or set(pending) != {'state', 'device'}:
+        raise ValueError('Invalid trackpad recovery journal')
+    previous = validate_state(pending['state'])
+    key = pending['device']
+    if not isinstance(key, str) or key not in previous['devices']:
+        raise ValueError('Invalid trackpad recovery device')
+    restore_previous(previous, key)
+
+
+def restore_previous(state, key, persist=True):
+    failures = []
+    # Try disk and live rollback independently: a full disk must not prevent
+    # restoring pointer control, and an offline compositor must not prevent saving.
+    if persist:
+        try:
+            save(state)
+        except Exception as exc:
+            failures.append(str(exc))
+    try:
+        if state['devices'][key].get('configured', True):
+            hypr('eval', lua_for({key: state['devices'][key]}))
+        elif not failures:
+            # No previous plugin rule exists. Only a config reload can remove
+            # the first runtime override and restore the user's original rules.
+            hypr('reload', 'config-only')
+    except Exception as exc:
+        failures.append(str(exc))
+    if failures:
+        raise RuntimeError('; '.join(failures))
+    clear_pending()
 
 
 def save(state):
+    validate_state(state)
     for group in state['devices'].values():
         if group['settings'].get('accel_profile') == 'custom':
             validate_native_curve(group['settings'].get('curve', DEFAULT_CURVE))
@@ -186,7 +387,7 @@ def save(state):
 def reconcile_generated(state):
     """Recover a removed rule file or an interrupted two-file save from JSON."""
     expected = lua_for(state['devices'])
-    if GENERATED.is_file() and GENERATED.read_text() == expected:
+    if read_state_file(GENERATED) == expected:
         return
     for group in state['devices'].values():
         if group['settings'].get('accel_profile') == 'custom':
@@ -208,13 +409,16 @@ def defaults():
 
 
 def initialize(live):
+    if not live:
+        return {'version': 1, 'devices': {}}
     base = defaults()
     devices = copy.deepcopy(live)
     # Import the old panel's Dell-only pointer setting without executing its Lua.
     legacy = STATE_ROOT / 'omarchy/toggles/hypr/touchpad-settings.lua'
-    text = legacy.read_text() if legacy.is_file() else ''
+    text = read_state_file(legacy) or ''
     overrides = dict(re.findall(r'hl\.device\(\{ name = "([A-Za-z0-9_.:+-]+)", sensitivity = (-?[0-9.]+) \}\)', text))
     for group in devices.values():
+        group['configured'] = False
         group['settings'] = dict(base)
         for name in group['names']:
             if name in overrides:
@@ -233,6 +437,8 @@ def snapshot(state, live):
 
 def migrate(state):
     """The previous panel inherited the driver's default adaptive profile."""
+    if not isinstance(state, dict) or type(state.get('version')) is not int or state['version'] not in (1, 2, 3):
+        raise ValueError('Unsupported trackpad state version; saved settings were not changed')
     updated = copy.deepcopy(state)
     for group in updated['devices'].values():
         settings = group['settings']
@@ -254,13 +460,16 @@ def migrate(state):
             if previous['profile'] == 'mac':
                 previous['profile'] = 'custom'
     updated['version'] = 3
-    return updated
+    return validate_state(updated)
 
 
 def change(state, key, option, value):
+    validate_state(state)
     if key not in state['devices']:
         raise ValueError('Unknown trackpad')
     updated = copy.deepcopy(state)
+    if updated['devices'][key].get('configured') is False:
+        updated['devices'][key]['configured'] = True
     settings = updated['devices'][key]['settings']
     if option == 'pointer_feel':
         if not isinstance(value, dict) or set(value) != {'profile', 'curve'}:
@@ -280,28 +489,46 @@ def change(state, key, option, value):
     else:
         validate_setting(option, value)
         settings[option] = value
-    if settings.get('accel_profile') == 'custom':
-        validate_native_curve(settings.get('curve', DEFAULT_CURVE))
-    # Only the selected trackpad receives a live update.
-    hypr('eval', lua_for({key: updated['devices'][key]}))
+    validate_state(updated)
+    # Validate every persisted curve before touching the compositor or disk.
+    for group in updated['devices'].values():
+        if group['settings'].get('accel_profile') == 'custom':
+            validate_native_curve(group['settings'].get('curve', DEFAULT_CURVE))
+    atomic_write(STATE.with_suffix('.pending.json'), json.dumps({'state': state, 'device': key}))
+    saving = False
     try:
+        # Only the selected trackpad receives a live update.
+        hypr('eval', lua_for({key: updated['devices'][key]}))
+        saving = True
         save(updated)
-    except Exception:
-        hypr('eval', lua_for({key: state['devices'][key]}))
-        save(state)
+        clear_pending()
+    except Exception as original:
+        try:
+            restore_previous(state, key, persist=saving)
+        except Exception as rollback:
+            raise RuntimeError(f'{original}; recovery is pending: {rollback}') from original
         raise
     return updated
 
 
 def main():
-    DIRECTORY.mkdir(parents=True, exist_ok=True)
-    lock_fd = os.open(DIRECTORY / 'settings.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(lock_fd, 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    command = sys.argv[1] if len(sys.argv) > 1 else 'state'
+    if command == 'set' and len(sys.argv) == 5:
+        validate_name(sys.argv[2])
+        value = json.loads(sys.argv[4])
+        validate_change(sys.argv[3], value)
+    elif command not in ('state', 'init') or len(sys.argv) > 2:
+        raise ValueError('Usage: trackpads.py [state|init|set DEVICE OPTION JSON_VALUE]')
+    with state_lock():
+        # Refuse future/corrupt state before processing even an older journal.
+        raw = read_state_file(STATE)
+        if raw is not None:
+            migrate(json.loads(raw))
+        recover_pending()
         live = group_devices(json.loads(hypr('devices', '-j'))['mice'])
-        command = sys.argv[1] if len(sys.argv) > 1 else 'state'
-        if STATE.exists():
-            state = json.loads(STATE.read_text())
+        raw = read_state_file(STATE)
+        if raw is not None:
+            state = json.loads(raw)
         elif command in ('state', 'init'):
             state = initialize(live)
             save(state)
@@ -323,11 +550,7 @@ def main():
         if state != previous:
             save(state)
         if command == 'set':
-            if len(sys.argv) != 5:
-                raise ValueError('Usage: trackpads.py set DEVICE OPTION JSON_VALUE')
-            state = change(state, sys.argv[2], sys.argv[3], json.loads(sys.argv[4]))
-        elif command not in ('state', 'init'):
-            raise ValueError('Unknown command')
+            state = change(state, sys.argv[2], sys.argv[3], value)
         reconcile_generated(state)
         print(json.dumps(snapshot(state, live)))
 
