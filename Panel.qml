@@ -18,6 +18,7 @@ Panel {
   property string selectedDevice: "apple"
   property string selectedLabel: "Apple"
   property bool deviceConnected: false
+  property bool hasSavedSettings: false
   property string deviceName: ""
   property bool touchpadEnabled: true
   property bool naturalScroll: false
@@ -36,7 +37,7 @@ Panel {
   property int editGeneration: 0
   property int stateGeneration: 0
   property bool refreshPending: false
-  readonly property string backend: String(Qt.resolvedUrl("trackpads.py")).replace(/^file:\/\//, "")
+  readonly property string backend: decodeURIComponent(String(Qt.resolvedUrl("trackpads.py")).replace(/^file:\/\//, ""))
 
   function updateState(raw) {
     var data
@@ -52,9 +53,10 @@ Panel {
       if (devices[i].id === selectedDevice) row = devices[i]
     }
     if (!row && devices.length) { row = devices[0]; selectedDevice = row.id }
-    if (!row) return
+    if (!row) { deviceName = ""; deviceConnected = false; return }
     selectedLabel = row.label
     deviceConnected = row.connected
+    hasSavedSettings = row.configured !== false
     deviceName = row.names[0] || ""
     var v = row.settings
     touchpadEnabled = v.enabled
@@ -64,11 +66,10 @@ Panel {
     clickfingerBehavior = v.clickfinger_behavior
     pointerAcceleration = v.accel_profile !== "flat"
     pointerFeel = Curve.fromSettings(v)
-    if (row.previous_pointer_feel) {
-      var previous = Curve.copy(previousFeels)
-      previous[selectedDevice] = row.previous_pointer_feel
-      previousFeels = previous
-    }
+    var previous = Curve.copy(previousFeels)
+    if (row.previous_pointer_feel) previous[selectedDevice] = row.previous_pointer_feel
+    else delete previous[selectedDevice]
+    previousFeels = previous
     scrollFactor = v.scroll_factor
     pendingScrollFactor = scrollFactor
     pointerSpeed = v.sensitivity
@@ -85,9 +86,19 @@ Panel {
   }
 
   function enqueue(option, value) {
+    var queue = pendingActions.slice()
+    // Replace only consecutive writes of the same scalar; preserve profile/undo ordering.
+    var last = queue.length ? queue[queue.length - 1] : null
+    if (last && last.device === selectedDevice && last.option === option && option !== "pointer_feel") {
+      queue.pop()
+    }
+    if (queue.length >= 128) {
+      settingsError = "Too many pending changes; wait for them to finish"
+      loadSelection()
+      return
+    }
     editGeneration++
     settingsError = ""
-    var queue = pendingActions.slice()
     queue.push({ device: selectedDevice, option: option, value: value })
     pendingActions = queue
     // Keep the local snapshot consistent while queued writes finish.
@@ -176,7 +187,7 @@ Panel {
   // activePhrases has not re-evaluated yet -- phraseIndex % 0 is NaN there,
   // and the lookup returns undefined, which QML refuses to assign to a string.
   readonly property string heroStatusText: deviceConnected
-    ? (touchpadEnabled ? "Settings saved separately" : "Trackpad disabled")
+    ? (touchpadEnabled ? (hasSavedSettings ? "Settings saved separately" : "Ready to customize") : "Trackpad disabled")
     : "Disconnected · settings remembered"
 
   readonly property color hoverFill: bar
@@ -547,6 +558,7 @@ Panel {
             saved: root.pointerFeel
             deviceLabel: root.selectedLabel + " Trackpad"
             busy: actionProc.running || root.pendingActions.length > 0
+            settingsError: root.settingsError
             canRestore: !!root.previousFeels[root.selectedDevice]
             onApplyRequested: function(value) { root.applyPointerFeel(value) }
             onRestoreRequested: root.restorePointerFeel()

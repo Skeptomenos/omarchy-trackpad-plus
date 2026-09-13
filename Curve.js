@@ -23,9 +23,9 @@ function points(curve) {
 }
 
 // Draw the response that libinput actually interpolates, including its tail.
-function sampledGain(curve, speed) {
-  if (speed <= 0) return points(curve)[1] / 0.1
-  var values = points(curve)
+function sampledGain(curve, speed, samples) {
+  var values = samples || points(curve)
+  if (speed <= 0) return values[1] / 0.1
   var index = Math.min(values.length - 2, Math.floor(speed / 0.1))
   var fraction = speed / 0.1 - index
   return (values[index] + fraction * (values[index + 1] - values[index])) / speed

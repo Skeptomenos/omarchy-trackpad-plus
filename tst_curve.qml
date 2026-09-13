@@ -25,9 +25,16 @@ Rectangle {
     function init() {
       editor.saved = {profile: "adaptive", curve: Curve.defaults()}
       editor.busy = false
+      editor.settingsError = ""
       editor.canRestore = false
       editor.begin()
       applied.clear(); restored.clear(); back.clear()
+    }
+    function test_failed_save_is_not_labelled_applied() {
+      editor.settingsError = "Compositor unavailable"
+      var status = findChild(editor, "curveStatus")
+      verify(status.text.indexOf("Compositor unavailable") >= 0)
+      verify(status.text.indexOf("Applied") < 0)
     }
     function test_preview_apply_and_restore() {
       editor.choose("mac")
@@ -195,7 +202,6 @@ Rectangle {
       verify(editor.implicitHeight < 740)
       var picture = grabImage(editor)
       verify(picture.width > 0)
-      picture.save("/tmp/trackpad-curve-editor.png")
     }
   }
 }

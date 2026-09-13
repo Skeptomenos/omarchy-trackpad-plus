@@ -14,6 +14,7 @@ FocusScope {
   property var draft: Curve.copy(saved)
   property string deviceLabel: "Trackpad"
   property bool busy: false
+  property string settingsError: ""
   property bool canRestore: false
   property bool numberPending: false
   property int hits: 0
@@ -223,6 +224,7 @@ FocusScope {
           onWidthChanged: requestPaint()
           onHeightChanged: requestPaint()
           onPaint: {
+            var samples = Curve.points(editor.draft.curve)
             var ctx = getContext("2d")
             ctx.reset()
             ctx.fillStyle = Qt.alpha(editor.accent, 0.09)
@@ -241,7 +243,7 @@ FocusScope {
             ctx.beginPath()
             for (var i = 0; i <= 160; i++) {
               var speed = i / 40
-              var x = plot.px(speed), y = plot.py(Curve.sampledGain(editor.draft.curve, speed))
+              var x = plot.px(speed), y = plot.py(Curve.sampledGain(editor.draft.curve, speed, samples))
               if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
             }
             ctx.stroke()
@@ -356,7 +358,8 @@ FocusScope {
     }
     Label {
       width: parent.width
-      text: editor.busy ? "Applying curve…" : editor.dirty ? "Curve preview · Apply to feel the change." : "Applied · try small corrections and longer movements below."
+      objectName: "curveStatus"
+      text: editor.settingsError ? "Settings error: " + editor.settingsError : editor.busy ? "Applying curve…" : editor.dirty ? "Curve preview · Apply to feel the change." : "Applied · try small corrections and longer movements below."
       opacity: 0.7
       font.pixelSize: 11 * editor.uiScale
     }

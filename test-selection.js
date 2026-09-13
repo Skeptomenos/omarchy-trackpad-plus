@@ -163,3 +163,37 @@ console.log('Passed: device selection, fine scroll steps, stale-read rejection, 
   assert.equal(ctx.pendingActions[1].value.profile, 'adaptive');
   assert.equal(ctx.devices[1].settings.accel_profile, 'adaptive');
 }
+
+{
+  const ctx = context();
+  ctx.previousFeels.apple = {profile: 'flat', curve: ctx.Curve.defaults()};
+  ctx.loadSelection();
+  assert.equal(ctx.previousFeels.apple, undefined, 'authoritative state clears stale undo');
+  ctx.devices = [];
+  ctx.loadSelection();
+  assert.equal(ctx.deviceName, '', 'removed devices must not remain actionable');
+  assert.equal(ctx.deviceConnected, false);
+  const backendExpression = qml.match(/readonly property string backend: (.*)/)[1];
+  ctx.Qt = {resolvedUrl: () => 'file:///tmp/plugin%20with%20spaces/trackpads.py'};
+  assert.equal(vm.runInContext(backendExpression, ctx), '/tmp/plugin with spaces/trackpads.py');
+}
+
+{
+  const Curve = require('./Curve.js');
+  const curve = Curve.defaults();
+  const samples = Curve.points(curve);
+  for (let index = 0; index <= 160; index++) {
+    assert.equal(Curve.sampledGain(curve, index / 40, samples), Curve.sampledGain(curve, index / 40));
+  }
+}
+
+{
+  const ctx = context();
+  ctx.actionProc.running = true;
+  for (let i = 0; i < 1000; i++) ctx.enqueue('scroll_factor', 0.01 + (i % 100) / 100);
+  assert.equal(ctx.pendingActions.length, 1, 'repeated scalar updates should coalesce');
+  assert.equal(ctx.pendingActions[0].value, 1);
+  for (let i = 0; i < 200; i++) ctx.enqueue(i % 2 ? 'natural_scroll' : 'tap_to_click', true);
+  assert.equal(ctx.pendingActions.length, 128, 'pending actions must have a fixed memory bound');
+  assert.match(ctx.settingsError, /Too many/);
+}
