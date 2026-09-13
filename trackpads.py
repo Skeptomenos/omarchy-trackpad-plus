@@ -19,7 +19,7 @@ GENERATED = STATE_ROOT / 'omarchy/toggles/hypr/zz-local-touchpads.lua'
 BOOLS = {'enabled', 'natural_scroll', 'tap_to_click', 'disable_while_typing', 'clickfinger_behavior'}
 RANGES = {'sensitivity': (-1, 1), 'scroll_factor': (0.01, 2)}
 DEFAULT_CURVE = {'precision': 0.3, 'start': 0.8, 'end': 2.8, 'fast': 1.6}
-CURVE_RANGES = {'precision': (0.02, 1.5), 'start': (0, 3.4), 'end': (0.2, 3.6), 'fast': (0.02, 3.5)}
+CURVE_RANGES = {'precision': (0.02, 1.5), 'start': (0, 3.8), 'end': (0.2, 4), 'fast': (0.02, 3.5)}
 
 
 def validate_curve(value):
@@ -39,12 +39,12 @@ def validate_curve(value):
 def curve_profile(curve):
     """Sample output velocity, not gain; libinput linearly interpolates these points.
 
-    The final section has constant gain so extrapolation stays bounded. Keep
-    this function in sync with Curve.js; the cross-language test compares both.
+    Two samples beyond the visible end (4.0) keep extrapolation at constant gain.
+    Keep this function in sync with Curve.js; the cross-language test compares both.
     """
     validate_curve(curve)
     points = []
-    for index in range(41):
+    for index in range(43):
         x = index * 0.1
         t = max(0, min(1, (x - curve['start']) / (curve['end'] - curve['start'])))
         gain = curve['precision'] + (curve['fast'] - curve['precision']) * t * t * (3 - 2 * t)

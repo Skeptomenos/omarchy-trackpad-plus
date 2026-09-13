@@ -87,7 +87,7 @@ FocusScope {
     readonly property real minimum: controlIndex === 0 ? 0.02 : controlIndex === 1 ? 0
       : controlIndex === 2 ? editor.draft.curve.start + 0.2 : editor.draft.curve.precision
     readonly property real maximum: controlIndex === 0 ? 1.5
-      : controlIndex === 1 ? editor.draft.curve.end - 0.2 : controlIndex === 2 ? 3.6 : 3.5
+      : controlIndex === 1 ? editor.draft.curve.end - 0.2 : controlIndex === 2 ? 4 : 3.5
     objectName: "curveSpinner" + controlIndex
     from: Math.ceil(minimum * units * factor - 0.000001)
     to: Math.floor(maximum * units * factor + 0.000001)
@@ -259,8 +259,11 @@ FocusScope {
             readonly property bool horizontal: index === 1 || index === 2
             readonly property real speed: index === 0 ? 0 : index === 1 ? editor.draft.curve.start : index === 2 ? editor.draft.curve.end : 4
             readonly property real gainValue: index < 2 ? editor.draft.curve.precision : editor.draft.curve.fast
+            // Keep the end and fast-swipe handles separately clickable at 100%.
+            readonly property real endOffset: index === 2 && plot.px(4) - plot.px(speed) < 32 * editor.uiScale
+              ? (plot.py(gainValue) < plot.topInset + 32 * editor.uiScale ? 32 : -32) * editor.uiScale : 0
             x: plot.px(speed) - width / 2
-            y: plot.py(gainValue) - height / 2
+            y: plot.py(gainValue) + endOffset - height / 2
             width: 16 * editor.uiScale
             height: width
             radius: horizontal ? 3 * editor.uiScale : width / 2
@@ -271,6 +274,15 @@ FocusScope {
             Accessible.role: Accessible.Slider
             Accessible.name: ["Precision speed", "Acceleration start", "Acceleration end", "Fast swipe travel"][index]
             Accessible.description: "Use arrow keys to adjust"
+            Rectangle {
+              visible: handle.endOffset !== 0
+              x: (parent.width - width) / 2
+              y: parent.height / 2 - Math.max(0, handle.endOffset)
+              width: editor.uiScale
+              height: Math.abs(handle.endOffset)
+              color: Qt.alpha(editor.accent, 0.5)
+              z: -1
+            }
             Keys.onPressed: function(event) {
               var direction = event.key === Qt.Key_Right || event.key === Qt.Key_Up ? 1 : event.key === Qt.Key_Left || event.key === Qt.Key_Down ? -1 : 0
               if (!direction) return

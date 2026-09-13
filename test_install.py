@@ -98,7 +98,7 @@ else:
         self.assertTrue(before['connected'])
         self.assertTrue((self.plugin / 'CurveEditor.qml').is_file())
         self.assertTrue((self.plugin / 'Curve.js').is_file())
-        value = {'profile': 'custom', 'curve': {'precision': 0.3, 'start': 0.8, 'end': 2.4, 'fast': 2.0}}
+        value = {'profile': 'custom', 'curve': {'precision': 0.3, 'start': 0.8, 'end': 4, 'fast': 2.0}}
         self.call('set', 'apple', 'pointer_feel', json.dumps(value))
         after = self.call('state')['devices'][0]
         self.assertEqual(after['settings']['curve'], value['curve'])

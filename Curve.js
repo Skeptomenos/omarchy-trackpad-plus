@@ -17,7 +17,8 @@ function gain(curve, speed) {
 
 function points(curve) {
   var out = []
-  for (var i = 0; i <= 40; i++) out.push(Number((i * 0.1 * gain(curve, i * 0.1)).toFixed(6)))
+  // Two samples beyond the visible 100% end keep extrapolation at constant gain.
+  for (var i = 0; i <= 42; i++) out.push(Number((i * 0.1 * gain(curve, i * 0.1)).toFixed(6)))
   return out
 }
 
@@ -25,7 +26,7 @@ function points(curve) {
 function sampledGain(curve, speed) {
   if (speed <= 0) return points(curve)[1] / 0.1
   var values = points(curve)
-  var index = Math.min(39, Math.floor(speed / 0.1))
+  var index = Math.min(values.length - 2, Math.floor(speed / 0.1))
   var fraction = speed / 0.1 - index
   return (values[index] + fraction * (values[index + 1] - values[index])) / speed
 }
@@ -39,8 +40,8 @@ function adjust(curve, handle, value, precise) {
     var start = Math.max(0, Math.min(next.end - 0.2, value))
     next.start = Math.max(0, Math.min(next.end - 0.2, precise ? Math.round(start * 1000000) / 1000000 : Math.round(start * 20) / 20))
   } else if (handle === 2) {
-    var end = Math.max(next.start + 0.2, Math.min(3.6, value))
-    next.end = Math.max(next.start + 0.2, Math.min(3.6, precise ? Math.round(end * 1000000) / 1000000 : Math.round(end * 20) / 20))
+    var end = Math.max(next.start + 0.2, Math.min(4, value))
+    next.end = Math.max(next.start + 0.2, Math.min(4, precise ? Math.round(end * 1000000) / 1000000 : Math.round(end * 20) / 20))
   }
   else next.fast = Math.max(next.precision, Math.min(3.5, value))
   return next

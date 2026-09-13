@@ -144,7 +144,9 @@ class TrackpadTests(unittest.TestCase):
 
     def test_graph_matches_backend_and_has_constant_gain_tail(self):
         curves = [m.DEFAULT_CURVE, {'precision': 0.08, 'start': 2.0, 'end': 3.6, 'fast': 0.65}, {'precision': 0.2, 'start': 0, 'end': 0.4, 'fast': 3.5},
-                  {'precision': 1.5, 'start': 3.4, 'end': 3.6, 'fast': 1.5}]
+                  {'precision': 1.5, 'start': 3.4, 'end': 3.6, 'fast': 1.5},
+                  dict(m.DEFAULT_CURVE, end=3.96), dict(m.DEFAULT_CURVE, end=4),
+                  dict(m.DEFAULT_CURVE, start=3.8, end=4)]
         script = "const c=require('./Curve.js'); console.log(JSON.stringify(JSON.parse(process.argv[1]).map(x=>c.points(x))))"
         plotted = json.loads(subprocess.check_output(['node', '-e', script, json.dumps(curves)], cwd=Path(__file__).parent))
         for curve, graph in zip(curves, plotted):
@@ -169,6 +171,20 @@ class TrackpadTests(unittest.TestCase):
                     m.change(self.state, 'apple', 'pointer_feel', {'profile': 'custom', 'curve': m.DEFAULT_CURVE})
                 run.assert_not_called()
                 save.assert_not_called()
+
+    def test_full_width_transition_has_constant_native_tail(self):
+        for end in [3.96, 4.0]:
+            curve = dict(m.DEFAULT_CURVE, end=end)
+            m.validate_native_curve(curve)
+            points = list(map(float, m.curve_profile(curve).split()[2:]))
+            self.assertEqual(len(points), 43)
+            for index in [40, 41, 42]:
+                self.assertAlmostEqual(points[index] / (index * 0.1), curve['fast'])
+            self.assertAlmostEqual((points[-1] - points[-2]) / 0.1, curve['fast'])
+            self.assertLess(points[35] / 3.5, curve['fast'])
+        m.validate_native_curve(dict(m.DEFAULT_CURVE, start=3.8, end=4))
+        with self.assertRaises(ValueError):
+            m.validate_curve(dict(m.DEFAULT_CURVE, end=4.01))
 
     def test_legacy_undo_curve_is_migrated_and_restorable(self):
         state = m.migrate(self.state)

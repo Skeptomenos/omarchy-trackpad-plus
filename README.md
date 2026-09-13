@@ -38,7 +38,9 @@ Open **Pointer feel**, choose **Mac-inspired** as a starting point, then use
 **Apply & try** and the target practice area. Drag the left handle vertically to
 adjust precision and the right circle vertically to adjust fast swipes. Move the
 two square handles horizontally to independently set where acceleration starts
-and where it reaches full speed. Each value also has an editable number spinner:
+and where it reaches full speed. End can reach 100%; increasing it while keeping
+Start fixed spreads the acceleration transition over a wider speed range.
+Each value also has an editable number spinner:
 click the number and press Up/Down, click its small arrow buttons, or type a value
 and press Enter. Gain steps are 0.001×; threshold steps are one percentage point.
 Hold Shift with ↑/↓ for 10× larger steps: 0.01× gain or 10 percentage points.
@@ -52,12 +54,14 @@ the profile used before the last Apply on that device, including after a restart
 Applied profiles persist across shell restarts and Hyprland reloads.
 
 The graph shows finger speed versus cursor travel multiplier (gain). The editor
-converts this to 41 evenly spaced output-velocity samples for libinput's native
+converts this to 43 evenly spaced output-velocity samples for libinput's native
 custom profile, and plots the response interpolated from those same samples.
 The backend validates each custom curve with the installed libinput library
 before applying or saving it. Libinput accepts at most 64 points; Hyprland 0.56
 does not report its point-validation failures through `hyprctl eval`, so checking
-the compositor response alone is insufficient. The editor uses 41 points.
+the compositor response alone is insufficient. The editor uses 43 points,
+including two beyond the visible graph to keep fast swipes at a constant gain
+even when End is 100%.
 The fast end has constant gain so extrapolation does not keep increasing it.
 The horizontal scale is relative, not calibrated physical finger speed.
 

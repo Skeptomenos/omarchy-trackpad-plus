@@ -154,6 +154,32 @@ Rectangle {
       mouseClick(findChild(editor, "curveSpinner0").up.indicator)
       compare(editor.draft.curve.precision, 0.021)
     }
+    function test_transition_end_reaches_100_percent() {
+      editor.choose("custom")
+      wait(50)
+      enterNumber(2, "99.00")
+      keyClick(Qt.Key_Return)
+      compare(editor.draft.curve.end, 3.96)
+      keyClick(Qt.Key_Up)
+      compare(editor.draft.curve.end, 4)
+      keyClick(Qt.Key_Up, Qt.ShiftModifier)
+      compare(editor.draft.curve.end, 4)
+      mouseClick(findChild(editor, "applyCurve"))
+      compare(editor.saved.curve.end, 4)
+      editor.begin()
+      compare(findChild(editor, "curveSpinner2").value, 10000)
+      var end = findChild(editor, "curveHandle2")
+      var fast = findChild(editor, "curveHandle3")
+      verify(Math.abs(end.y - fast.y) >= 30, "End and fast-swipe hit areas must remain separate")
+      mouseDrag(end, end.width / 2, end.height / 2, -40, 0)
+      verify(editor.draft.curve.end < 4)
+      compare(editor.draft.curve.fast, 1.6)
+      editor.adjust(2, 4)
+      var before = editor.draft.curve.fast
+      mouseDrag(fast, fast.width / 2, fast.height / 2, 0, -20)
+      verify(editor.draft.curve.fast > before)
+      compare(editor.draft.curve.end, 4)
+    }
     function test_visual_layout() {
       editor.choose("mac")
       wait(100)
