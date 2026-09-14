@@ -125,7 +125,10 @@ def validate_native_curve(curve):
 
 
 def validate_name(name):
-    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.:+-]{1,128}', name):
+    # PS/2 Synaptics touchpads (common on ThinkPads, e.g. "synps/2-synaptics-touchpad")
+    # include a literal '/' in their Hyprland device name; allow it alongside the
+    # original safe alphabet.
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.:/+-]{1,128}', name):
         raise ValueError('Unsupported trackpad device name')
     return name
 

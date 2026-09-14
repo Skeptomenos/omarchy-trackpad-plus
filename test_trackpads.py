@@ -216,6 +216,17 @@ class TrackpadTests(unittest.TestCase):
         self.assertEqual(set(groups), {name})
         self.assertEqual(groups[name]['names'], [name])
 
+    def test_ps2_synaptics_touchpad_slash_in_name_is_accepted(self):
+        # ThinkPads (e.g. the T470) report the classic PS/2 Synaptics driver as
+        # "synps/2-synaptics-touchpad" -- a literal '/' in the Hyprland device
+        # name. It must be both detected and pass name validation.
+        name = 'synps/2-synaptics-touchpad'
+        self.assertEqual(m.validate_name(name), name)
+        groups = m.group_devices([{'name': n} for n in [
+            name, 'tpps/2-ibm-trackpoint', 'usb-mouse']])
+        self.assertEqual(set(groups), {name})
+        self.assertEqual(groups[name]['names'], [name])
+
     def test_acceleration_migration_preserves_existing_settings(self):
         migrated = m.migrate(self.state)
         self.assertEqual(migrated['version'], 4)
