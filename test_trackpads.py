@@ -209,6 +209,13 @@ class TrackpadTests(unittest.TestCase):
         self.assertEqual(set(self.groups),{'apple','dell'})
         self.assertEqual(len(self.groups['apple']['names']),2)
 
+    def test_lenovo_synaptics_without_touchpad_suffix_excludes_trackpoint(self):
+        name = 'synaptics-tm3512-010'
+        groups = m.group_devices([{'name': n} for n in [
+            name, 'tpps/2-elan-trackpoint', 'usb-mouse', 'synaptics-usb-mouse']])
+        self.assertEqual(set(groups), {name})
+        self.assertEqual(groups[name]['names'], [name])
+
     def test_acceleration_migration_preserves_existing_settings(self):
         migrated = m.migrate(self.state)
         self.assertEqual(migrated['version'], 4)

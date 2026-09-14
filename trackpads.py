@@ -156,7 +156,9 @@ def group_devices(mice):
     for mouse in mice:
         name = mouse['name']
         is_builtin_apple = name == 'apple-mtp-multi-touch'
-        if not is_builtin_apple and not re.search('touchpad|trackpad', name, re.I):
+        # This Lenovo Synaptics touchpad omits the device type from its name.
+        is_known_touchpad = is_builtin_apple or name == 'synaptics-tm3512-010'
+        if not is_known_touchpad and not re.search('touchpad|trackpad', name, re.I):
             continue
         validate_name(name)
         if is_builtin_apple or name.startswith('apple-inc.-magic-trackpad'):

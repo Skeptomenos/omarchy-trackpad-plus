@@ -72,6 +72,25 @@ else:
             self.assertIn('error', json.loads(result.stdout))
             self.assertFalse((self.root / 'state').exists())
 
+    def test_lenovo_touchpad_is_discovered_and_edits_leave_trackpoint_alone(self):
+        name = 'synaptics-tm3512-010'
+        self.devices.write_text(json.dumps({'mice': [
+            {'name': name, 'defaultSpeed': 0.0, 'scrollFactor': -1.0},
+            {'name': 'tpps/2-elan-trackpoint', 'defaultSpeed': 0.0, 'scrollFactor': -1.0}
+        ]}))
+        discovered = self.call('state')['devices']
+        self.assertEqual([d['id'] for d in discovered], [name])
+        self.assertTrue(discovered[0]['connected'])
+        self.assertFalse(discovered[0]['configured'])
+        rules = self.root / 'state/omarchy/toggles/hypr/zz-local-touchpads.lua'
+        self.assertNotIn('hl.device', rules.read_text())
+        changed = self.call('set', name, 'scroll_factor', '0.1')
+        self.assertEqual(changed, self.call('state'))
+        self.assertEqual(changed['devices'][0]['settings']['scroll_factor'], 0.1)
+        for payload in [rules.read_text(), (self.root / 'eval.log').read_text()]:
+            self.assertIn(name, payload)
+            self.assertNotIn('trackpoint', payload)
+
     def test_future_state_is_preserved_byte_for_byte(self):
         self.call('state')
         state = self.root / 'state/omarchy/local-touchpads/settings.json'
