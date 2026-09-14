@@ -125,7 +125,7 @@ def validate_native_curve(curve):
 
 
 def validate_name(name):
-    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.:+-]{1,128}', name):
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.:/+-]{1,128}', name):
         raise ValueError('Unsupported trackpad device name')
     return name
 
@@ -155,7 +155,7 @@ def group_devices(mice):
     groups = {}
     for mouse in mice:
         name = mouse['name']
-        is_builtin_apple = name == 'apple-mtp-multi-touch'
+        is_builtin_apple = name in ('apple-mtp-multi-touch', 'bcm5974')
         # This Lenovo Synaptics touchpad omits the device type from its name.
         is_known_touchpad = is_builtin_apple or name == 'synaptics-tm3512-010'
         if not is_known_touchpad and not re.search('touchpad|trackpad', name, re.I):
@@ -422,7 +422,7 @@ def initialize(live):
     # Import the old panel's Dell-only pointer setting without executing its Lua.
     legacy = STATE_ROOT / 'omarchy/toggles/hypr/touchpad-settings.lua'
     text = read_state_file(legacy) or ''
-    overrides = dict(re.findall(r'hl\.device\(\{ name = "([A-Za-z0-9_.:+-]+)", sensitivity = (-?[0-9.]+) \}\)', text))
+    overrides = dict(re.findall(r'hl\.device\(\{ name = "([A-Za-z0-9_.:/+-]+)", sensitivity = (-?[0-9.]+) \}\)', text))
     for group in devices.values():
         group['configured'] = False
         group['settings'] = dict(base)

@@ -40,10 +40,12 @@ use **YYYY.MM.DD.N**: release date followed by a revision starting at 0 and
 increasing for additional releases that day. The screenshots below and above
 were taken before the version footer was added.
 
-The built-in Apple Silicon trackpad (`apple-mtp-multi-touch`) and Apple Magic
+The built-in Apple trackpads (`apple-mtp-multi-touch` on Apple Silicon,
+`bcm5974` on Intel MacBooks) and Apple Magic
 Trackpad interfaces share one set of Apple settings. The known
 Dell touchpad is labeled Dell; other devices containing `touchpad` or `trackpad`
-in their Hyprland name are listed by that name. Disconnected devices retain their
+in their Hyprland name are listed by that name, including PS/2 names with `/`
+such as `synps/2-synaptics-touchpad`. Disconnected devices retain their
 saved settings, and newly attached devices are discovered during state refreshes.
 The Lenovo Synaptics `synaptics-tm3512-010` is also recognized despite lacking
 either word in its name. Its separate TrackPoint is excluded. Other trackpads

@@ -281,6 +281,29 @@ class TrackpadTests(unittest.TestCase):
         self.assertEqual(list(groups), ['apple'])
         self.assertEqual(groups['apple']['names'], ['apple-mtp-multi-touch'])
 
+    def test_intel_bcm5974_groups_with_apple(self):
+        groups = m.group_devices([{'name': 'bcm5974'},
+                                  {'name': 'apple-inc.-magic-trackpad'},
+                                  {'name': 'usb-mouse'}])
+        self.assertEqual(list(groups), ['apple'])
+        self.assertEqual(sorted(groups['apple']['names']),
+                         ['apple-inc.-magic-trackpad', 'bcm5974'])
+        self.assertEqual(groups['apple']['label'], 'Apple')
+
+    def test_ps2_slash_touchpad_is_accepted_and_emitted_safely(self):
+        name = 'synps/2-synaptics-touchpad'
+        m.validate_name(name)
+        groups = m.group_devices([{'name': name}, {'name': 'usb-mouse'}])
+        self.assertEqual(list(groups), [name])
+        state = copy.deepcopy(self.state)
+        state['devices'][name] = {'id': name, 'label': name, 'names': [name],
+            'configured': True, 'settings': dict(state['devices']['apple']['settings'])}
+        state = m.migrate(state)
+        lua = m.lua_for(state['devices'])
+        self.assertIn('"synps/2-synaptics-touchpad"', lua)
+        with self.assertRaises(ValueError):
+            m.validate_name('bad" }); os.execute("x")')
+
     def test_curve_apply_is_atomic_and_only_emits_native_settings(self):
         state = m.migrate(self.state)
         with patch.object(m, 'hypr') as run, patch.object(m, 'save'):

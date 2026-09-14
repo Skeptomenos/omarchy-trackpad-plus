@@ -37,7 +37,8 @@ This release identifier is separate from the backend's settings schema version.
   retained for compatibility; the current panel uses `trackpads.py` instead.
 
 The `apple` settings group intentionally retains the original grouping of Apple
-Magic Trackpad interfaces and now recognizes the built-in Apple trackpad. These
+Magic Trackpad interfaces and now recognizes the built-in Apple trackpads
+(`apple-mtp-multi-touch`, `bcm5974`). These
 Apple devices share settings when connected together. The `dell` ID recognizes
 one known Dell hardware name; other trackpads use their compositor device name.
 New groups have `configured: false` until their first explicit edit; generated
