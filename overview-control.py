@@ -17,7 +17,6 @@ import select
 import selectors
 import shutil
 import signal
-import stat
 import subprocess
 import sys
 import time
@@ -186,8 +185,22 @@ class Controller:
             raise ControlError('Overview ownership record is invalid; no process was controlled.') from exc
 
     def owns(self, record):
+        start = record.get('start')
+        token = record.get('token')
+        if (not isinstance(start, str) or not start.isascii() or not start.isdigit()
+                or not isinstance(token, str) or len(token) != 64
+                or any(ch not in '0123456789abcdef' for ch in token)
+                or any(not isinstance(record.get(key), str) or not record[key]
+                       for key in ('config', 'session', 'version'))
+                or not isinstance(record.get('argv'), list) or not record['argv']
+                or any(not isinstance(arg, str) for arg in record['argv'])):
+            raise ControlError('Overview ownership record is invalid; no process was controlled.')
         info = process_info(record['pid'])
         if info is None:
+            return False
+        # A different start time proves the saved process is gone. Discarding its
+        # record is safe; never signal the unrelated process now using this PID.
+        if info['start'] != start:
             return False
         argv = info['argv']
         env = info['env']
@@ -195,7 +208,6 @@ class Controller:
             config = argv[argv.index('-p') + 1]
         except (ValueError, IndexError):
             config = None
-        token = record.get('token')
         valid = (info['uid'] == os.getuid() and info['start'] == record.get('start')
                  and config == self.config == record.get('config')
                  and isinstance(token, str) and len(token) == 64
@@ -241,8 +253,14 @@ class Controller:
                                               'opened', 'pending', 'rendered', 'lockState')}
         result.update(ok=True, installed=True, reachable=True, protocolCompatible=True)
         if reply.get('result') in ('hidden', 'checking-lock', 'opened', 'locked', 'lock-unknown',
-                                  'lock-unavailable', 'lock-timeout', 'closed', 'stopping', 'rendered'):
+                                  'lock-unavailable', 'lock-timeout', 'closed', 'stopping', 'rendered',
+                                  'workspace-changed', 'monitor-removed', 'no-monitor', 'selection', 'escape'):
             result['result'] = reply['result']
+        if type(reply.get('mapped')) is bool:
+            result['mapped'] = reply['mapped']
+        for key in ('captures', 'ready', 'opens', 'closes'):
+            if type(reply.get(key)) is int and 0 <= reply[key] <= 1000000:
+                result[key] = reply[key]
         return result
 
     def stop_owned(self, record):
@@ -261,7 +279,9 @@ class Controller:
                 ready, _, _ = select.select([descriptor], [], [], self.timeout)
                 if not ready:
                     signal.pidfd_send_signal(descriptor, signal.SIGKILL)
-                    select.select([descriptor], [], [], 1.0)
+                    ready, _, _ = select.select([descriptor], [], [], 1.0)
+                    if not ready:
+                        raise ControlError('Overview did not stop; its ownership record was retained. Retry stop.')
             except ProcessLookupError:
                 pass
         finally:
@@ -338,7 +358,16 @@ class Controller:
                     return self.missing()
                 record, reply = self.launch()
             else:
-                reply = self.ipc(record, 'status')
+                try:
+                    reply = self.ipc(record, 'status')
+                except (ControlError, OSError):
+                    if operation != 'close':
+                        raise
+                    # Close must release the input grab even if the UI event loop
+                    # cannot answer. OS ownership is checked again by stop_owned.
+                    self.stop_owned(record)
+                    self.forget()
+                    return self.missing()
                 self.validate(record, reply)
             try:
                 if operation in ('open', 'close', 'toggle'):
@@ -355,10 +384,12 @@ class Controller:
                         reply = self.ipc(record, 'status', max(0.001, deadline - time.monotonic()))
                         self.validate(record, reply)
                 return self.validate(record, reply)
-            except BaseException:
-                if created:
+            except BaseException as error:
+                if created or operation == 'close':
                     self.stop_owned(record)
                     self.forget()
+                    if operation == 'close' and isinstance(error, (ControlError, OSError)):
+                        return self.missing()
                 elif operation in ('open', 'toggle'):
                     # A lost reply must not leave a pending request that opens later.
                     try:

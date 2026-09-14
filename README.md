@@ -26,7 +26,7 @@ The original project and this derivative are licensed under the MIT License.
 - Natural scrolling, tap to click, disable while typing, and clickfinger behavior.
 - Keyboard navigation through device selection, sliders, and switches.
 
-Select a detected trackpad at the top. The switch beside **Trackpad Plus** turns
+Select a detected trackpad at the top. The **Enable trackpad** switch inside the gear menu turns
 that trackpad on or off. **Natural Scrolling** controls scroll direction;
 **Tap to Click** enables tapping instead of pressing; **Disable While Typing**
 reduces accidental input while typing; **Two-Finger Right Click** enables a
@@ -37,8 +37,8 @@ preview until you press **Apply & try**.
 
 The footer shows the installed version, starting with **2026.09.13.0**. Releases
 use **YYYY.MM.DD.N**: release date followed by a revision starting at 0 and
-increasing for additional releases that day. The screenshots below and above
-were taken before the version footer was added.
+increasing for additional releases that day. The screenshots show the earlier layout, before tabs and the version footer
+were added.
 
 The built-in Apple Silicon trackpad (`apple-mtp-multi-touch`) and Apple Magic
 Trackpad interfaces share one set of Apple settings. The known
@@ -48,6 +48,135 @@ saved settings, and newly attached devices are discovered during state refreshes
 The Lenovo Synaptics `synaptics-tm3512-010` is also recognized despite lacking
 either word in its name. Its separate TrackPoint is excluded. Other trackpads
 whose names omit both words may still need an explicit detection rule.
+
+## Tabs and workspace gestures
+
+Use **Pointer** for pointer feel, tapping, right click, and typing protection;
+**Scrolling** for scroll speed and direction; and **Gestures** for workspace
+navigation. The gear beside the selected device contains **Enable trackpad**
+and **Device scale**. Pending pointer/scroll slider edits save before switching tabs.
+
+In **Gestures**, enable horizontal workspace swiping, choose **3 or 4 fingers**,
+optionally reverse direction, and adjust **Swipe distance** (50–2000). Lower
+values cover a workspace with less finger travel. Up/Down changes distance by
+10; Shift+Up/Down changes it by 100. These are compositor units, not millimeters.
+Swipe completion also depends on velocity and Hyprland's cancellation threshold.
+Gesture bindings apply across trackpads; distance also affects touchscreen
+workspace swipes. They are independent of the selected device's pointer curve.
+
+Press **Apply gestures** to save and reload Hyprland's input configuration.
+A simple existing horizontal workspace binding in `~/.config/hypr/input.lua`
+is adopted into a marked block with a backup; it is not registered twice.
+**Restore original** removes that block and restores the original binding,
+keeping unrelated input edits. **Reload settings** discards the gesture draft
+and reads the saved configuration again. Conflicting, conditional, indirect, or
+otherwise unsupported gesture definitions show an explanation and remain under
+manual control.
+
+Trackpad Plus backs up the original input file to
+`~/.local/state/omarchy/local-touchpads/gesture-input-original.lua.txt`.
+A failed reload restores the previous file. An interrupted write leaves a
+recovery journal; the next gesture read attempts recovery, but refuses to
+replace a file that has since been manually changed. Existing configuration
+errors must be resolved before applying gestures.
+
+### Workspace overview (experimental)
+
+Choose an **Overview provider** in **Gestures**:
+
+- **Trackpad Plus** runs a separate Quickshell overview included in this repository.
+  It needs no HyMission installation or native compositor hooks. This is the
+  experimental option being tested on a MacBook Air M2 running Linux; x86_64
+  rendering has not yet been verified.
+- **HyMission** uses the separately installed compositor plugin described below.
+  Existing HyMission settings keep that provider until you explicitly change it.
+
+For the built-in option, select **Trackpad Plus**, use **Test overview**, and
+confirm that your windows render and selection works before enabling **Swipe up
+for overview** and pressing **Apply gestures**. Installing or inspecting the
+companion does not enable gestures. A successful process start or IPC connection
+alone is not proof that previews work on your system.
+
+Swipe up with your selected three or four fingers to open; swipe down, press
+Escape, or click **Close** to dismiss. Click a window to focus it, or a workspace
+heading to switch there, including an existing empty workspace. Tab or arrow keys
+move through controls; Enter selects. Horizontal swipes retain native workspace
+switching; changing workspace dismisses the overview.
+
+The first version shows ordinary workspaces on the monitor where you opened it.
+Use the page controls for additional workspaces or windows. Other monitors,
+special workspaces, and hidden group members are excluded. Previews are static
+snapshots captured on opening or paging, not live video, and the transition does
+not follow your fingers continuously. An unavailable preview remains selectable.
+
+The companion runs outside both Hyprland and the bar, starts on demand, and can
+stay idle after dismissal. Hidden and locked views release their capture sources;
+an unknown lock state prevents opening. Unlocking does not reopen it. Preview
+images and window titles are not written to files, logs, or network services.
+Capture is limited to the visible page with two simultaneous requests and a
+per-card deadline. Large source windows can still require large graphics buffers.
+
+Gesture block schemas 2 and 3 remain readable and restorable. An explicit edit
+writes schema 4 with the selected provider; this is separate from the pointer
+settings schema. **Restore original** restores the saved input bindings without
+changing your trackpad values or uninstalling either provider.
+
+### Optional HyMission provider
+
+[HyMission](https://github.com/gfhdhytghd/hymission) is an **optional runtime
+dependency** for the Mission Control-style overview. It renders the overview
+inside Hyprland; Trackpad Plus configures the gestures. HyMission is separately
+installed and maintained, and is not bundled with Trackpad Plus. Horizontal
+workspace swiping works without it.
+
+**Compatibility:** HyMission's overview currently requires an **x86_64** system.
+Hyprland 0.56.2 disables the function hooks it needs on ARM64, including Apple
+Silicon Macs. The plugin can load there but fails when opening the overview with
+`surface pass hook attach failed`. Trackpad Plus disables the **HyMission** overview option
+on unsupported architectures. Pointer tuning, scrolling, and native horizontal
+workspace swipes still work on ARM64.
+
+With **HyMission** selected, the Gestures tab checks the architecture and whether
+HyMission is loaded before enabling **Swipe up for overview**. Turn it on, choose 3 or 4 fingers, then press **Apply gestures**:
+
+- Swipe up to open an overview of your workspaces and windows.
+- Swipe down to return. HyMission can also close an open overview with an upward swipe.
+- Swipe horizontally to switch workspaces when **Workspace swipe** is enabled.
+
+HyMission's overview follows your finger continuously. It uses its default
+vertical direction; an existing `gesture_invert_vertical` override still applies.
+Trackpad Plus refuses to replace an existing manual vertical gesture. Resolve
+that binding in your config first. **Restore original** removes the managed
+overview gesture along with the other managed gestures; it does not uninstall
+HyMission.
+
+**Install HyMission ↗** opens the [upstream installation instructions](https://github.com/gfhdhytghd/hymission#installation).
+Use a release matching your Hyprland version. The gesture integration targets
+HyMission's `v0.7.0-v0.56.2` API and Hyprland 0.56.2. Automated tests cover
+configuration and fallback behavior; rendering could not be validated on the
+ARM64 development machine. Building and loading the plugin does not establish
+overview compatibility.
+
+For systems with `hyprpm`, the upstream installation flow is:
+
+```sh
+hyprpm update
+hyprpm add https://github.com/gfhdhytghd/hymission
+hyprpm enable hymission
+hyprpm reload
+```
+
+Add `o.exec_on_start("hyprpm reload")` to `~/.config/hypr/autostart.lua` for
+future logins if it is not already configured. If `hyprpm` is unavailable, use
+HyMission's manual build instructions with headers matching the running
+Hyprland build. A manually built plugin needs rebuilding after a Hyprland ABI
+change; do not reuse a binary from another machine or compositor version.
+
+After loading the plugin, click **Reload settings** in Trackpad Plus and enable
+the overview. If HyMission later becomes unavailable, the saved config skips
+overview registration and falls back to native horizontal swiping. The widget
+shows the missing dependency and still lets you turn overview off or restore
+your original settings. Your pointer and scrolling settings are independent.
 
 ## The top-right gear: Device scale
 
@@ -203,11 +332,20 @@ The widget appears when a supported trackpad is detected or remembered.
 To upgrade an installed Git-managed copy:
 
 ```sh
+trackpad_plugin="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus"
+# Stop the companion while its current files are still installed.
+if test -f "$trackpad_plugin/overview-control.py"; then
+  python3 "$trackpad_plugin/overview-control.py" stop
+fi
 omarchy plugin update davefano.trackpad-plus
 omarchy restart shell
 ```
 
-Back up local plugin edits before updating; develop in a separate checkout.
+Back up local plugin edits and the state paths below before updating; develop
+in a separate checkout. Run these commands from your Hyprland desktop session.
+If stopping the companion reports an ownership or compatibility error, resolve
+that error before replacing its files. An upgrade starts no overview automatically;
+your next explicit open starts the new version.
 
 ## Migrate from the original widget or local customization
 
@@ -270,6 +408,26 @@ omarchy-shell davefano.trackpad-plus show
 omarchy-shell davefano.trackpad-plus hide
 ```
 
+The separate overview has its own controller; these commands do not open the
+trackpad settings panel:
+
+```sh
+trackpad_plugin="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus"
+python3 "$trackpad_plugin/overview-control.py" status
+python3 "$trackpad_plugin/overview-control.py" start
+python3 "$trackpad_plugin/overview-control.py" open
+python3 "$trackpad_plugin/overview-control.py" close
+python3 "$trackpad_plugin/overview-control.py" toggle
+python3 "$trackpad_plugin/overview-control.py" stop
+```
+
+`start` launches an idle companion without capturing. `open` and `toggle` may
+launch and display it. `status`, `close`, and `stop` never launch a missing
+instance. The controller verifies the process, compositor session, and version
+before sending commands. Its ownership record lives in a private
+`$XDG_RUNTIME_DIR/trackpad-plus-overview-*` directory, separate from saved settings.
+Use the controller rather than starting `overview/shell.qml` directly.
+
 ## Persistence and process behavior
 
 Settings live under `$XDG_STATE_HOME` (default `~/.local/state`):
@@ -319,8 +477,20 @@ records tested failure cases and remaining compatibility limits. Report bugs thr
 ## Removal
 
 ```sh
+# If you enabled gesture management, first use Gestures → Restore original.
+trackpad_plugin="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus"
+if test -f "$trackpad_plugin/overview-control.py"; then
+  python3 "$trackpad_plugin/overview-control.py" stop
+fi
 omarchy plugin remove davefano.trackpad-plus
 ```
+
+Stop the companion before removing or replacing its files. To roll back only
+the overview, turn off **Swipe up for overview**, apply, and stop the companion;
+pointer controls and native horizontal swipes remain available. To restore a
+previous plugin version, stop this companion first, restore your backed-up plugin
+and matching gesture configuration, and restart the shell. Keep the per-device
+state backup for an exact rollback.
 
 Removal preserves settings and generated device rules. To stop applying those
 rules while retaining a recoverable copy, move `zz-local-touchpads.lua` outside

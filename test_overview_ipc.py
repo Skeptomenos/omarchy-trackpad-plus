@@ -26,12 +26,16 @@ class RealIpcTests(unittest.TestCase):
         shutil.copy2(REPO / 'overview/Session.qml', self.root / 'overview/Session.qml')
         (self.root / 'overview/shell.qml').write_text('import Quickshell\nShellRoot { Session {} }\n')
         # Fake observer serves controlled states only; no real Wayland connection.
-        (self.root / 'overview/lock-watch.py').write_text('''import os, time
+        (self.root / 'overview/lock-watch.py').write_text('''import os, select, sys, time
 from pathlib import Path
+assert sys.argv[1:] == ['--format', 'plain', '--exit-on-consumer-close'], sys.argv
+poll = select.poll()
+poll.register(sys.stdout.fileno(), select.POLLERR | select.POLLHUP)
 path = Path(os.environ['TEST_LOCK_STATE'])
 previous = None
 print('unknown', flush=True)
 while True:
+    if poll.poll(0): break
     value = path.read_text().strip()
     if value == 'exit': break
     if value != previous:
@@ -87,6 +91,23 @@ while True:
         self.c.execute('open'); self.wait_state(lockState='unlocked', opened=True)
         self.c.execute('close'); self.wait_state(opened=False)
         self.assertFalse(self.c.execute('stop')['reachable'])
+
+    def test_toggle_lifecycle_and_unknown_lock_cancellation(self):
+        self.c.execute('start')
+        self.wait_state(lockState='unlocked', opened=False)
+        self.assertTrue(self.c.execute('toggle')['opened'])
+        self.assertFalse(self.c.execute('toggle')['opened'])
+        self.lock_state.write_text('locked')
+        self.wait_state(lockState='locked')
+        self.assertFalse(self.c.execute('toggle')['opened'])
+        self.lock_state.write_text('unknown')
+        self.wait_state(lockState='unknown')
+        self.c.timeout = .3
+        with self.assertRaises(control.ControlError):
+            self.c.execute('toggle')
+        self.wait_state(opened=False, pending=False)
+        self.lock_state.write_text('unlocked')
+        self.wait_state(lockState='unlocked', opened=False, pending=False)
 
 
 if __name__ == '__main__': unittest.main()

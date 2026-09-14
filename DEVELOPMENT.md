@@ -32,6 +32,31 @@ This release identifier is separate from the backend's settings schema version.
 - `trackpads.py`: device discovery, validation, file locking, persistence, and
   per-device `hl.device` updates. The libinput validator creates configuration
   objects without opening devices. Keep its sampled curve in sync with Curve.js.
+- `gestures.py` / `GestureEditor.qml`: global workspace gestures, explicit
+  adoption of literal bindings in input.lua, marked-block persistence and
+  compare-before-restore recovery. Uses the existing bounded subprocesses,
+  secure file writes, and state lock; never mixes gestures into device settings.
+  Managed block schema 4 stores explicit overview provider selection. Schemas 2
+  and 3 remain readable and restorable; legacy overview maps to HyMission, and
+  only an explicit edit upgrades the block. Provider detection must not start
+  capture or replace the user's selection. HyMission's architecture guard applies
+  only to that provider. Native horizontal bindings remain independent.
+- `overview-control.py`: bounded, session-specific launcher and controller with
+  a private runtime lock, process ownership checks, and versioned IPC handshake.
+  Status/close/stop do not start a companion. It imports secure file helpers from
+  `trackpads.py` but never edits pointer or gesture settings.
+- `overview/Session.qml` / `lock-watch.py`: authenticated control and fail-closed
+  Wayland lock observation. Visibility is permission to build the view, not proof
+  that a frame rendered. Unknown lock state closes or prevents opening.
+- `overview/Model.js`: pure workspace filtering, stable window identities, and
+  selection. Named and existing empty ordinary workspaces are included on the
+  invocation monitor; special workspaces and hidden group members are excluded.
+- `overview/shell.qml`, `Overview.qml`, `WindowCard.qml`, and `Preview.qml`: separate
+  Quickshell application, compositor adapter, paged navigation, and single-frame
+  captures. At most two requests run concurrently; each has a two-second deadline.
+  Only visible cards retain previews. Display dimensions do not bound compositor
+  buffer allocation. No preview or title is written to disk, logs, or a network.
+  The application reads theme colors without importing the bar's QML components.
 - `Model.js`: numeric helpers and inherited legacy parsing utilities.
 - `touchpad-state` / `touchpad-sensitivity`: inherited legacy CLI helpers,
   retained for compatibility; the current panel uses `trackpads.py` instead.
@@ -63,23 +88,33 @@ Controls/Test, and Qt development tools (`qmllint`, `qmltestrunner`):
 
 ```sh
 python3 test_trackpads.py
+python3 test_gestures.py
 node test-selection.js
+node test-overview-model.js
+python3 test_overview_control.py
+python3 test_overview_ipc.py
+python3 tools/overview-probe/test_lock_watch.py
 python3 test_install.py
 python3 test_ipc.py
 python3 lint-qml.py
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
   /usr/lib/qt6/bin/qmltestrunner -input tst_curve.qml
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
+  /usr/lib/qt6/bin/qmltestrunner -input tst_gestures.qml
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
+  /usr/lib/qt6/bin/qmltestrunner -input tst_overview.qml
 perl -c touchpad-state
 bash -n touchpad-sensitivity
 git diff --check
 ```
 
-`lint-qml.py` runs qmllint over every QML source using the installed Omarchy
-modules. It fails on all errors and warnings except specifically identified
+`lint-qml.py` runs qmllint over the root QML sources and recursively under
+`overview/`, using the installed Omarchy modules. The disposable live-probe
+fixtures under `tools/overview-probe/` are excluded. It fails on all errors and warnings except specifically identified
 missing metadata for Omarchy's dynamic bar/style properties and Quickshell's
 `QProcess::ExitStatus`. These host API limitations are listed by the checker;
-new or unrelated warnings fail. The editor and its test must lint without any
-warnings. IPC and live checks cover the installed host interfaces.
+new or unrelated warnings fail. Pure editor and model-view tests must lint
+without warnings. IPC and live checks cover the installed host interfaces.
 
 Installation tests copy Git-tracked files into temporary storage, use a fake
 compositor, and verify initialization, device isolation, discovery, migration,
@@ -95,6 +130,11 @@ curve bounds, preview, undo, and layout. Python compares the JS curve with the
 native payload and checks actual libinput acceptance, including rejection of
 the former oversized 81-point payload. IPC tests use a separate offscreen shell
 and temporary sockets to verify all five commands against Omarchy's base Panel.
+Overview controller tests use isolated runtimes and fake processes to check
+single-instance startup, ownership rejection, stale records, bounded failures,
+and cleanup. Overview IPC tests run the actual Session component with an isolated
+lock observer; they do not test GPU capture. The installed-copy test also verifies
+all companion dependencies are tracked and non-starting commands remain idle.
 
 ## Live installation and release checks
 
@@ -103,6 +143,19 @@ copy the tracked runtime files and manifest into a new user plugin directory
 named `davefano.trackpad-plus`, validate it with `omarchy plugin validate`, and
 rescan with `omarchy-shell shell rescanPlugins`. Disable the previous widget
 before enabling this one. Never edit `/usr/share/omarchy`.
+
+For a development overview test, run `python3 overview-control.py open` from the
+checkout in your desktop session. Dismiss with Escape or `close`; use `status` to
+inspect state and `stop` to end only that checkout's owned companion. Stop an
+installed companion before testing a checkout in the same compositor session;
+conflicting ownership must not be bypassed by deleting its record. Always stop
+before replacing, moving, or deleting runtime files. There is no autostart service.
+
+The overview remains experimental. The feasibility probe has verified capture,
+inactive-workspace previews, focus release, and lock behavior on an M2 Linux
+host with Hyprland 0.56.2, Quickshell 0.3.1, and Qt 6.11.2. Full integration checks
+are separate; x86_64 rendering is not yet verified. Do not describe an IPC
+handshake or successful QML import as rendering compatibility.
 
 Before publishing:
 
@@ -114,8 +167,44 @@ Before publishing:
 4. Restart the shell and reload Hyprland; verify persistence and
    `hyprctl configerrors`. Check `systemctl --user --failed`, `systemctl --failed`,
    and Quickshell logs for newly introduced failures.
-5. Keep a recovery copy of the previous plugin, shell layout, and state.
+5. Verify both provider paths and schema 2/3 restore preservation. Test the
+   companion explicitly before enabling its gestures; ensure install/state reads
+   do not start it. Confirm manual vertical bindings are not overwritten.
+6. Exercise window and empty-workspace selection, paging, keyboard dismissal,
+   native horizontal swipes, unavailable captures, and source-window removal.
+   Test lock during capture, observer loss, unlock staying closed, and reopening.
+   Confirm hidden capture counts are zero and normal input returns after killing
+   only the companion. Review logs without recording window titles or pixels.
+7. Measure cold/warm open time and resource retention over repeated open/close
+   cycles, including large windows. Record tested hardware and limits before
+   promoting the overview from experimental. The disposable probe's commands and
+   evidence are in `tools/overview-probe/README.md`; interactive lock checks need
+   someone present to unlock the desktop.
+8. Keep a recovery copy of the previous plugin, shell layout, input.lua, and state.
+   Stop the companion before any upgrade, rollback, or removal.
 
 Check source diffs, images, license, and history before committing. Publish only
 a verified clean tree. The upstream repository and the former personal fork
 remain separate from this project's `origin`.
+
+### M2 overview measurements (2026-09-14)
+
+`python3 tools/overview-check/check.py --cycles 100` verified real terminal
+previews on current and inactive workspaces, exact window selection, workspace
+selection, close/focus restoration, and dismissal after an external workspace
+switch. Subsequent runs also checked a fullscreen terminal preview and forced companion
+termination, observer cleanup, and a capture-free explicit restart. No images
+were saved. The workload had two owned terminals plus the session's existing
+windows across four ordinary workspaces on one monitor.
+
+Cold open to a rendered preview: **337 ms**. First 30 warm opens: median
+**172 ms**, p95 **202 ms**. Across 100 cycles, RSS was 157,168 KiB before,
+167,712 KiB peak, and 157,072 KiB after; file descriptors were 44 before,
+69 peak, and 43 after. These are observations on the M2/Hyprland 0.56.2 /
+Quickshell 0.3.1 session, not a portability or performance guarantee. A release
+performance envelope has not yet been agreed; the feature remains experimental.
+
+The production lock check is interactive: `python3 tools/overview-check/check_lock.py`.
+Run it only when ready to unlock the desktop after five seconds. It checks
+capture teardown, rejected opens during lock and observer restart, no automatic
+reopening after unlock, and audio-control responsiveness.

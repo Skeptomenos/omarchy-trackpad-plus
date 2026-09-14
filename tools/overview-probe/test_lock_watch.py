@@ -11,7 +11,9 @@ import unittest
 from unittest import mock
 
 
-SPEC = importlib.util.spec_from_file_location("lock_watch", Path(__file__).with_name("lock-watch.py"))
+SPEC = importlib.util.spec_from_file_location(
+    "lock_watch", Path(__file__).resolve().parents[2] / "overview" / "lock-watch.py"
+)
 watcher = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(watcher)
 
@@ -46,6 +48,33 @@ def request(connection):
 
 
 class LockWatchTests(unittest.TestCase):
+    def test_main_plain_output_and_consumer_pipe_contract(self):
+        for exit_on_close in (False, True):
+            with self.subTest(exit_on_close=exit_on_close):
+                reader, writer = os.pipe()
+                with os.fdopen(reader) as output, os.fdopen(writer, "w") as stdout:
+                    arguments = ["lock-watch.py", "--format", "plain", "--init-timeout", "0.25"]
+                    if exit_on_close:
+                        arguments.append("--exit-on-consumer-close")
+
+                    def observe(emit, timeout, *, consumer_fd):
+                        self.assertEqual(timeout, 0.25)
+                        self.assertEqual(consumer_fd, stdout.fileno() if exit_on_close else None)
+                        emit("unknown", "initializing")
+                        emit("unlocked", "initial-sync")
+                        return 0
+
+                    with mock.patch.object(watcher.sys, "argv", arguments), \
+                            mock.patch.object(watcher.sys, "stdout", stdout), \
+                            mock.patch.object(watcher.signal, "signal") as register_signal, \
+                            mock.patch.object(watcher, "watch", side_effect=observe) as observe_call:
+                        self.assertEqual(watcher.main(), 0)
+                        observe_call.assert_called_once()
+                        register_signal.assert_called_once()
+                        self.assertEqual(register_signal.call_args.args[0], watcher.signal.SIGTERM)
+                    stdout.close()
+                    self.assertEqual(output.read(), "unknown\nunlocked\n")
+
     def run_server(self, script, timeout=0.5):
         client, server = socket.socketpair()
         server.settimeout(2)

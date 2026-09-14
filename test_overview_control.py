@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('overview_control', Path(__file__).with_name('overview-control.py'))
 control = importlib.util.module_from_spec(SPEC)
@@ -34,7 +35,7 @@ while True:
     conn, _ = s.accept()
     with conn:
         args = json.loads(conn.recv(65536)); op = args[0]
-        if mode == 'timeout': time.sleep(30)
+        if mode == 'timeout' or (root / 'hang-now').exists() or (op == 'close' and (root / 'hang-close').exists()): time.sleep(30)
         if mode == 'oversized': conn.sendall(b'x'*20000); continue
         if mode == 'malformed': conn.sendall(b'not-json'); continue
         if op != 'status' and args[1] != os.environ['TRACKPAD_OVERVIEW_TOKEN']:
@@ -92,11 +93,58 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(self.c.execute('close')['opened'])
         self.assertFalse(self.c.execute('stop')['reachable'])
 
+    def test_toggle_opens_and_closes_same_instance(self):
+        first = self.c.execute('toggle')
+        self.assertTrue(first['opened'])
+        second = self.c.execute('toggle')
+        self.assertEqual(first['pid'], second['pid'])
+        self.assertFalse(second['opened'])
+
+    def test_close_stops_an_owned_unresponsive_overview(self):
+        reply = self.c.execute('open')
+        (self.runtime / 'hang-now').touch()
+        with self.assertRaises(control.ControlError):
+            self.c.execute('status')
+        os.kill(reply['pid'], 0)  # Status inspection never terminates it.
+        began = time.monotonic()
+        self.assertFalse(self.c.execute('close')['reachable'])
+        self.assertLess(time.monotonic() - began, 2)
+        self.c.last_spawn.wait(timeout=2)
+        self.assertFalse(self.c.record_path.exists())
+
     def test_concurrent_open_has_one_instance(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             replies = list(pool.map(lambda _: self.make().execute('open'), range(2)))
         self.assertEqual(replies[0]['pid'], replies[1]['pid'])
         self.assertTrue(all(r['opened'] for r in replies))
+
+    def test_close_ipc_timeout_stops_owned_process(self):
+        self.c.execute('open')
+        (self.runtime / 'hang-close').touch()
+        self.assertFalse(self.c.execute('close')['reachable'])
+        self.c.last_spawn.wait(timeout=2)
+        self.assertFalse(self.c.record_path.exists())
+
+    def test_failed_close_termination_retains_record(self):
+        self.c.execute('open')
+        original = self.c.record_path.read_bytes()
+        (self.runtime / 'hang-now').touch()
+        with patch.object(self.c, 'stop_owned', side_effect=control.ControlError('still running')):
+            with self.assertRaisesRegex(control.ControlError, 'still running'):
+                self.c.execute('close')
+        self.assertEqual(self.c.record_path.read_bytes(), original)
+
+    def test_unconfirmed_termination_retains_record(self):
+        reply = self.c.execute('start')
+        original = self.c.record_path.read_bytes()
+        with patch.object(control.signal, 'pidfd_send_signal') as send_signal, \
+                patch.object(control.select, 'select', return_value=([], [], [])):
+            with self.assertRaisesRegex(control.ControlError, 'did not stop'):
+                self.c.execute('stop')
+            self.assertEqual([call.args[1] for call in send_signal.call_args_list],
+                             [control.signal.SIGTERM, control.signal.SIGKILL])
+        self.assertEqual(self.c.record_path.read_bytes(), original)
+        os.kill(reply['pid'], 0)
 
     def test_wrong_token_cannot_mutate_or_stop_owned_process(self):
         reply = self.c.execute('start')
@@ -115,6 +163,7 @@ class LifecycleTests(unittest.TestCase):
             self.c.execute('start')
             record = self.c.record_path.read_text()
             altered = json.loads(record); altered['pid'] = unrelated.pid
+            altered['start'] = control.process_info(unrelated.pid)['start']
             self.c.record_path.write_text(json.dumps(altered))
             with self.assertRaises(control.ControlError): self.c.execute('stop')
             self.assertIsNone(unrelated.poll())
@@ -123,10 +172,54 @@ class LifecycleTests(unittest.TestCase):
             unrelated.terminate(); unrelated.wait()
 
     def test_stale_pid_record_recovers_only_explicit_start(self):
-        self.c.execute('start'); self.c.execute('stop')
-        self.c.record_path.write_text(json.dumps({'pid': 2147483647}))
+        self.c.execute('start')
+        record = json.loads(self.c.record_path.read_text())
+        self.c.execute('stop')
+        record['pid'] = 2147483647
+        self.c.record_path.write_text(json.dumps(record))
         self.assertFalse(self.c.execute('status')['reachable'])
         self.assertTrue(self.c.execute('start')['reachable'])
+
+    def test_reused_live_pid_recovers_without_signaling_it(self):
+        self.c.execute('start')
+        record = json.loads(self.c.record_path.read_text())
+        self.c.execute('stop')
+        unrelated = subprocess.Popen(['sleep', '30'])
+        try:
+            record['pid'] = unrelated.pid
+            record['start'] = str(int(control.process_info(unrelated.pid)['start']) - 1)
+            for op in ('status', 'close', 'stop', 'start', 'open', 'toggle'):
+                with self.subTest(operation=op):
+                    self.c.record_path.write_text(json.dumps(record))
+                    with patch.object(control.signal, 'pidfd_send_signal') as send_signal:
+                        reply = self.c.execute(op)
+                        send_signal.assert_not_called()
+                    self.assertIsNone(unrelated.poll())
+                    self.assertEqual(reply['reachable'], op in ('start', 'open', 'toggle'))
+                    if reply['reachable']:
+                        self.assertNotEqual(reply['pid'], unrelated.pid)
+                        self.c.execute('stop')
+                    else:
+                        self.assertFalse(self.c.record_path.exists())
+        finally:
+            unrelated.terminate(); unrelated.wait()
+
+    def test_malformed_identity_and_same_process_mismatch_fail_closed(self):
+        self.c.execute('start')
+        original = json.loads(self.c.record_path.read_text())
+        for key, value in (('start', None), ('start', 'invalid'), ('start', 42),
+                           ('token', ''), ('argv', None), ('config', '/other/shell.qml'),
+                           ('session', 'other-session')):
+            with self.subTest(key=key, value=value):
+                altered = dict(original, **{key: value})
+                self.c.record_path.write_text(json.dumps(altered))
+                with patch.object(control.signal, 'pidfd_send_signal') as send_signal:
+                    for op in ('status', 'close', 'stop', 'start', 'open', 'toggle'):
+                        with self.assertRaises(control.ControlError):
+                            self.c.execute(op)
+                    send_signal.assert_not_called()
+                self.assertEqual(json.loads(self.c.record_path.read_text()), altered)
+        self.c.record_path.write_text(json.dumps(original))
 
     def test_failed_launches_are_bounded_and_reaped(self):
         for mode in ('hang', 'timeout', 'malformed', 'oversized', 'wrong-version', 'wrong-session'):
