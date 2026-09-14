@@ -18,7 +18,8 @@ Item {
             pid: Quickshell.processId, instance: Quickshell.instanceId,
             config: Quickshell.shellPath("shell.qml"), opened: session.opened,
             pending: session.pending, lockState: session.lockState,
-            rendered: session.rendered, result: session.result });
+            rendered: session.rendered, mapped: session.mapped, captures: session.captures,
+            ready: session.ready, opens: session.openCount, closes: session.closeCount, result: session.result });
     }
     function denied() { return JSON.stringify({ error: "unauthorized" }); }
 
@@ -28,6 +29,9 @@ Item {
     property string lockState: "unknown"
     property string result: "hidden"
     property bool rendered: false
+    property bool mapped: false
+    property int captures: 0
+    property int ready: 0
     property int openCount: 0
     property int closeCount: 0
     property bool initializingLock: true
@@ -38,6 +42,9 @@ Item {
         pending = false;
         opened = false;
         rendered = false;
+        mapped = false;
+        captures = 0;
+        ready = 0;
         result = reason;
         closeCount++;
         closed(reason);
