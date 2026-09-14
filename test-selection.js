@@ -20,6 +20,7 @@ function context() {
     actionProc: { running: false }, stateProc: { running: false }, backend: 'trackpads.py',
     Model: require('./Model.js'),
     Curve: require('./Curve.js'), previousFeels: {}, curveEditor: {},
+    keyCatcher: { forceActiveFocus() {} },
     scrollDebounce: { running: false, stop() { this.running = false; } },
     pointerDebounce: { running: false, stop() { this.running = false; } }
   };
@@ -144,7 +145,6 @@ function context() {
   ctx.setScrollFactor(0.056);
   assert.equal(ctx.scrollFactor, 0.06);
 }
-console.log('Passed: device selection, fine scroll steps, stale-read rejection, debounce ordering, timeout recovery, and IPC configuration.');
 
 {
   const ctx = context();
@@ -219,3 +219,120 @@ console.log('Passed: device selection, fine scroll steps, stale-read rejection, 
   assert.equal(ctx.scrollFactor, 0.2);
   assert.equal(ctx.Model.clampScrollFactor(3), 1);
 }
+
+{
+  const ctx = context();
+  ctx.activeTab = "pointer";
+  ctx.deviceSettingsOpen = false;
+  assert.ok(ctx.navigationSections().includes("acceleration"));
+  assert.ok(!ctx.navigationSections().includes("scroll"));
+  ctx.activeTab = "scrolling";
+  assert.ok(ctx.navigationSections().includes("scroll"));
+  assert.ok(!ctx.navigationSections().includes("tap"));
+  ctx.deviceSettingsOpen = true;
+  assert.ok(ctx.navigationSections().includes("enable"));
+  ctx.activeTab = "gestures";
+  assert.ok(!ctx.navigationSections().includes("scroll"));
+  ctx.scrollDebounce.running = true;
+  ctx.pendingScrollFactor = 0.15;
+  ctx.changeTab("pointer");
+  assert.equal(ctx.activeTab, "pointer");
+  assert.equal(ctx.scrollDebounce.running, false);
+  assert.equal(JSON.parse(ctx.actionProc.command.at(-1)), 0.15);
+}
+
+{
+  const ctx = context();
+  ctx.gestureProc = {running: false};
+  ctx.gestureBackend = 'gestures.py';
+  ctx.gestureEditor = {load(value) { this.saved = value; }};
+  ctx.runGestureAction('set', {enabled: true, fingers: 3, distance: 300, invert: false});
+  assert.equal(ctx.gestureProc.running, true);
+  assert.equal(ctx.gestureProc.command.at(-2), 'set');
+  const before = JSON.stringify(ctx.gestureProc.command);
+  ctx.runGestureAction('restore');
+  assert.equal(JSON.stringify(ctx.gestureProc.command), before, 'busy gesture writes cannot overlap');
+  ctx.finishGestureAction(124);
+  assert.match(ctx.gestureError, /did not complete/);
+  ctx.gestureProc.running = false;
+  ctx.refreshGestures();
+  assert.equal(ctx.gestureProc.command.at(-1), 'state');
+  ctx.receiveGestures(JSON.stringify({can_edit: true, can_restore: true,
+    settings: {enabled: true, fingers: 4, distance: 400, invert: false}, message: 'Managed'}));
+  assert.equal(ctx.gestureEditor.saved.fingers, 4);
+  assert.equal(ctx.gestureCanRestore, true);
+  ctx.finishGestureAction(0);
+  assert.equal(ctx.gestureError, '');
+  ctx.receiveGestures('{"error":"reload rejected"}');
+  assert.equal(ctx.gestureEditor.saved.fingers, 4, 'failed save must retain previous acknowledged settings');
+  assert.match(ctx.gestureError, /reload rejected/);
+}
+
+// Explicit overview checks cannot discard unsaved gesture edits or accept old responses.
+{
+  const ctx = context();
+  ctx.gestureProc = {running: false};
+  ctx.overviewProc = {running: false};
+  ctx.overviewRequest = 0;
+  ctx.gestureBackend = 'gestures.py';
+  ctx.gestureEditor = {draft: {fingers: 4, overview_provider: 'trackpad-plus'},
+    load() { throw new Error('preview must not reload the draft'); }};
+  ctx.requestOverview(true);
+  const request = ctx.overviewRequest;
+  assert.equal(ctx.overviewProc.command.at(-1), 'preview');
+  ctx.requestOverview(false);
+  assert.equal(ctx.overviewRequest, request, 'preview operations cannot overlap');
+  ctx.receiveOverview(JSON.stringify({installed: true, reachable: true, protocolCompatible: true,
+    rendered: false, opened: true, lockState: 'unlocked'}), request);
+  assert.match(ctx.overviewPreviewText, /rendering is not confirmed/);
+  assert.equal(ctx.gestureEditor.draft.fingers, 4);
+  const status = ctx.overviewPreviewText;
+  ctx.receiveOverview('{"error":"stale error"}', request - 1);
+  ctx.finishOverview(124, request - 1);
+  assert.equal(ctx.overviewPreviewText, status);
+  ctx.overviewProc.running = false;
+  ctx.requestOverview(false);
+  assert.equal(ctx.overviewProc.command.at(-1), 'overview-status');
+  ctx.finishOverview(124, ctx.overviewRequest);
+  assert.match(ctx.overviewPreviewText, /did not respond/);
+  ctx.receiveOverview(JSON.stringify({installed: true, reachable: true, protocolCompatible: true,
+    rendered: true, opened: true, lockState: 'unlocked'}), ctx.overviewRequest);
+  assert.match(ctx.overviewPreviewText, /rendered/);
+  assert.equal(ctx.gestureEditor.draft.overview_provider, 'trackpad-plus');
+}
+
+// Gesture tab focus must not disable the panel's keyboard dispatcher until
+// a control inside the editor actually owns focus.
+{
+  const ctx = context();
+  let entered = 0, panelFocused = 0;
+  ctx.gestureEditor = {activeFocus: false, beginEditing() { entered++; this.activeFocus = true; }};
+  ctx.keyCatcher = {forceActiveFocus() { panelFocused++; ctx.gestureEditor.activeFocus = false; }};
+  ctx.gestureProc = {running: false};
+  ctx.gestureBackend = 'gestures.py';
+  ctx.editingCurve = false;
+  ctx.deviceSettingsOpen = false;
+  ctx.activeTab = 'gestures';
+  ctx.focusSection = 'device';
+  assert.equal(ctx.keyboardNavigationBlocked(), false, 'reopened gesture tab must accept Escape and arrows');
+  ctx.allSections = ctx.navigationSections();
+  ctx.moveCursor(1);
+  assert.equal(ctx.focusSection, 'device-settings');
+  ctx.moveCursor(1);
+  assert.equal(ctx.focusSection, 'tabs');
+  ctx.moveCursor(1);
+  assert.equal(entered, 1, 'Down from tabs enters the gesture controls');
+  assert.equal(ctx.keyboardNavigationBlocked(), true, 'editor owns its keyboard input');
+  ctx.changeTab('gestures');
+  assert.equal(panelFocused, 1, 'mouse or keyboard tab selection restores panel navigation');
+  assert.equal(ctx.keyboardNavigationBlocked(), false);
+  ctx.activateCursor();
+  assert.equal(entered, 2, 'Enter from tabs also enters the gesture controls');
+  ctx.changeTab('pointer');
+  assert.equal(ctx.keyboardNavigationBlocked(), false);
+  ctx.activateCursor();
+  assert.equal(entered, 2, 'other tabs retain existing navigation');
+  ctx.editingCurve = true;
+  assert.equal(ctx.keyboardNavigationBlocked(), true, 'curve editor keeps its existing focus behavior');
+}
+console.log('Passed: device selection, fine scroll steps, stale-read rejection, debounce ordering, timeout recovery, and IPC configuration.');
