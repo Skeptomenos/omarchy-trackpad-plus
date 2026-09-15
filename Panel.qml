@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls as Controls
 import Quickshell.Io
 import qs.Ui
 import qs.Commons
@@ -39,6 +40,17 @@ Panel {
   property var previousFeels: ({})
   property bool editingCurve: false
   property bool deviceSettingsOpen: false
+  property bool gestureCanEdit: false
+  property bool gestureCanRestore: false
+  property var gestureCompanion: ({installed: false})
+  property string overviewPreviewText: ""
+  property bool overviewReceived: false
+  property int overviewRequest: 0
+  property var gestureHymission: ({available: false, message: "Checking HyMission…"})
+  property string gestureStatus: "Loading gesture settings…"
+  property string gestureError: ""
+  property bool gestureReceived: false
+  readonly property string gestureBackend: decodeURIComponent(String(Qt.resolvedUrl("gestures.py")).replace(/^file:\/\//, ""))
   property real scrollScale: 1
   property real scrollFactor: 0.2
   property real pointerSpeed: 0.0
@@ -148,60 +160,103 @@ Panel {
   // Carry sub-notch touchpad deltas between wheel events.
   property real wheelAccumulator: 0
 
+  function runGestureAction(action, value) {
+    if (gestureProc.running) return
+    gestureError = ""
+    gestureReceived = false
+    var args = ["python3", "-B", gestureBackend, action]
+    if (action === "set") args.push(JSON.stringify(value))
+    gestureProc.command = bounded(30, args)
+    gestureProc.running = true
+  }
+
+  function refreshGestures() { runGestureAction("state") }
+
+  function receiveGestures(raw) {
+    gestureReceived = true
+    try {
+      var data = JSON.parse(raw)
+      if (data.error) { gestureError = data.error; return }
+      if (!data.settings) { gestureError = "Could not read gesture settings"; return }
+      gestureCanEdit = data.can_edit === true
+      gestureCanRestore = data.can_restore === true
+      gestureCompanion = data.companion || {installed: false}
+      gestureHymission = data.hymission || {available: false, message: "Reload settings to check HyMission"}
+      gestureStatus = data.message || ""
+      gestureEditor.load(data.settings)
+    } catch (error) { gestureError = "Could not read gesture settings" }
+  }
+
+  function finishGestureAction(code) {
+    if ((code !== 0 || !gestureReceived) && !gestureError)
+      gestureError = "Gesture update did not complete. Reload settings to recover and try again."
+  }
+
+  // Preview/status have their own process and never reload the settings draft.
+  function requestOverview(preview) {
+    if (overviewProc.running || gestureProc.running) return
+    overviewRequest += 1
+    overviewProc.requestId = overviewRequest
+    overviewReceived = false
+    overviewPreviewText = preview ? "Opening overview…" : "Checking overview…"
+    overviewProc.command = bounded(12, ["python3", "-B", gestureBackend, preview ? "preview" : "overview-status"])
+    overviewProc.running = true
+  }
+
+  function receiveOverview(raw, requestId) {
+    if (requestId !== overviewRequest) return
+    overviewReceived = true
+    try {
+      var data = JSON.parse(raw)
+      gestureCompanion = data
+      if (data.error) overviewPreviewText = data.message || data.error
+      else if (!data.installed) overviewPreviewText = "Update or reinstall Trackpad Plus to include overview."
+      else if (!data.reachable) overviewPreviewText = "Installed · not running. Test overview to open it."
+      else if (!data.protocolCompatible) overviewPreviewText = "Overview version mismatch. Stop it and reinstall matching files."
+      else if (data.lockState !== "unlocked") overviewPreviewText = "Overview is closed until the session is unlocked and lock status is available."
+      else if (data.rendered) overviewPreviewText = "Overview rendered. Close with Escape, then apply to connect your gestures."
+      else if (data.opened) overviewPreviewText = "Overview opened; rendering is not confirmed yet. Check status while it is visible."
+      else overviewPreviewText = "Overview ready · closed. Test it to check window previews."
+    } catch (error) { overviewPreviewText = "Could not read overview status. Try Test overview again." }
+  }
+
+  function finishOverview(code, requestId) {
+    if (requestId !== overviewRequest) return
+    if (!overviewReceived)
+      overviewPreviewText = "Overview did not respond in time. Pointer controls and workspace swipes are unchanged."
+  }
+
   // ---- Cursor navigation ----
-  // Sections: "header" (enable/disable toggle), "scroll" (scroll speed slider),
-  // then toggle rows: "natural", "tap", "typing", "clickfinger"
-  property string focusSection: "header"
+  property string activeTab: "pointer"
+  property string focusSection: "device"
   property int selectedIndex: 0
   property bool cursorActive: false
+  readonly property var allSections: navigationSections()
 
-  readonly property var allSections: ["device", "device-settings", "header", "scroll"].concat(
-    pointerFeel.profile === "mac" || pointerFeel.profile === "custom" ? [] : ["pointer"]
-  ).concat(["acceleration", "natural", "tap", "typing", "clickfinger"])
+  function navigationSections() {
+    var sections = ["device", "device-settings"]
+    if (deviceSettingsOpen) sections.push("enable")
+    sections.push("tabs")
+    if (activeTab === "scrolling") return sections.concat(["scroll", "natural"])
+    if (activeTab === "gestures") return sections
+    if (pointerFeel.profile !== "mac" && pointerFeel.profile !== "custom") sections.push("pointer")
+    return sections.concat(["acceleration", "tap", "typing", "clickfinger"])
+  }
+
+  function changeTab(tab) {
+    if (["pointer", "scrolling", "gestures"].indexOf(tab) < 0) return
+    selectDevice(selectedDevice) // Commit pending slider edits before hiding them.
+    activeTab = tab
+    focusSection = "tabs"
+    keyCatcher.forceActiveFocus()
+    if (tab === "gestures") refreshGestures()
+  }
 
   readonly property string icon: {
     if (!deviceName) return ""
     return touchpadEnabled ? "󰟸" : "󰤳"
   }
 
-  // Agent-flavored phrases for the hero status line, rotated on a timer so the
-  // panel feels alive -- the same trick the built-in network, bluetooth, and
-  // power panels use. Two sets, picked by whether the pad is listening or not.
-  readonly property var enabledPhrases: [
-    "Tracking fingers",
-    "Counting taps",
-    "Reading swipes",
-    "Sensing capacitance",
-    "Herding pixels",
-    "Chasing gestures",
-    "Smoothing jitter",
-    "Polling deltas",
-    "Feeling around"
-  ]
-  readonly property var disabledPhrases: [
-    "Keyboardpunk",
-    "Palms rejected",
-    "Homerow purist",
-    "Hjkl forever",
-    "Sensor napping",
-    "Ignoring thumbs",
-    "Refusing swipes",
-    "Gone tactile"
-  ]
-  property int phraseIndex: 0
-
-  // Whichever list is "active" given the current touchpad state. Empty when
-  // there is no device, which is what parks the rotation on a static label.
-  readonly property var activePhrases: {
-    if (!deviceName) return []
-    return touchpadEnabled ? enabledPhrases : disabledPhrases
-  }
-  readonly property bool rotatingPhrases: false
-
-  // Guard on the list itself rather than on deviceName. Bindings settle in
-  // arbitrary order, so there is a tick where deviceName is already set but
-  // activePhrases has not re-evaluated yet -- phraseIndex % 0 is NaN there,
-  // and the lookup returns undefined, which QML refuses to assign to a string.
   readonly property string heroStatusText: deviceConnected
     ? (touchpadEnabled ? (hasSavedSettings ? "Settings saved separately" : "Ready to customize") : "Trackpad disabled")
     : "Disconnected · settings remembered"
@@ -213,7 +268,15 @@ Panel {
     ? Style.selectedFillFor(bar.foreground, Color.accent)
     : "transparent"
 
+  function keyboardNavigationBlocked() {
+    return editingCurve || gestureEditor.activeFocus
+  }
+
   function moveCursor(delta) {
+    if (delta > 0 && focusSection === "tabs" && activeTab === "gestures") {
+      gestureEditor.beginEditing()
+      return
+    }
     var sections = allSections
     var sIdx = sections.indexOf(focusSection)
     if (sIdx < 0) { focusSection = sections[0]; return }
@@ -230,6 +293,9 @@ Panel {
       var index = devices.findIndex(function(d) { return d.id === selectedDevice })
       var next = Math.max(0, Math.min(devices.length - 1, index + delta))
       if (devices[next]) selectDevice(devices[next].id)
+    } else if (focusSection === "tabs") {
+      var tabs = ["pointer", "scrolling", "gestures"]
+      changeTab(tabs[Math.max(0, Math.min(2, tabs.indexOf(activeTab) + delta))])
     } else if (focusSection === "scroll") {
       adjustScrollFactor(delta > 0 ? 0.01 : -0.01)
     } else if (focusSection === "pointer") {
@@ -238,9 +304,10 @@ Panel {
   }
 
   function activateCursor() {
+    if (focusSection === "tabs" && activeTab === "gestures") { gestureEditor.beginEditing(); return }
     if (focusSection === "device-settings") { toggleDeviceSettings(selectedDevice); return }
     if (focusSection === "acceleration") { openCurveEditor(); return }
-    if (focusSection === "header") { toggleTouchpad(); return }
+    if (focusSection === "enable") { toggleTouchpad(); return }
     if (focusSection === "natural") { toggleNaturalScroll(); return }
     if (focusSection === "tap") { toggleTapToClick(); return }
     if (focusSection === "typing") { toggleDisableWhileTyping(); return }
@@ -417,6 +484,7 @@ Panel {
     if (opened) {
       editingCurve = false
       refresh()
+      if (activeTab === "gestures") refreshGestures()
       focusSection = "device"
       cursorActive = false
     }
@@ -428,49 +496,6 @@ Panel {
     running: root.opened || root.devices.length === 0
     repeat: true
     onTriggered: root.refresh()
-  }
-
-  // Rotate the hero phrase while the panel is open and a device is present.
-  // The swap is wrapped in a fade so the changeover reads as one motion
-  // rather than a hard cut.
-  Timer {
-    id: phraseTimer
-    interval: 2800
-    running: root.opened && root.rotatingPhrases
-    repeat: true
-    triggeredOnStart: false
-    onTriggered: phraseSwap.restart()
-  }
-
-  SequentialAnimation {
-    id: phraseSwap
-    PropertyAnimation {
-      target: heroStatus; property: "opacity"
-      to: 0.0; duration: 180; easing.type: Easing.OutQuad
-    }
-    ScriptAction {
-      script: {
-        var n = root.activePhrases.length
-        if (n > 0) root.phraseIndex = (root.phraseIndex + 1) % n
-      }
-    }
-    PropertyAnimation {
-      target: heroStatus; property: "opacity"
-      to: 1.0; duration: 260; easing.type: Easing.InQuad
-    }
-  }
-
-  // Toggling the pad swaps phrase sets, so restart the cycle from the top --
-  // otherwise index 4 of "enabled" carries over as index 4 of "disabled" and
-  // the label looks like it skipped. Leaving a rotating state entirely (device
-  // unplugged) halts a mid-flight fade so "NO DEVICE" is never stuck dimmed.
-  Connections {
-    target: root
-    function onActivePhrasesChanged() {
-      phraseSwap.stop()
-      heroStatus.opacity = 1.0
-      root.phraseIndex = 0
-    }
   }
 
   // Give omarchy-toggle-input-device and the reload time to land, then
@@ -526,6 +551,30 @@ Panel {
     }
   }
 
+  Process {
+    id: gestureProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.receiveGestures(String(text))
+    }
+    onExited: function(code, status) {
+      Qt.callLater(function() { root.finishGestureAction(code) })
+    }
+  }
+
+  Process {
+    id: overviewProc
+    property int requestId: 0
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.receiveOverview(String(text), overviewProc.requestId)
+    }
+    onExited: function(code, status) {
+      var request = requestId
+      Qt.callLater(function() { root.finishOverview(code, request) })
+    }
+  }
+
   // ---- Bar icon ----
   BarIconButton {
     id: button
@@ -552,7 +601,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.editingCurve
+      blocked: root.keyboardNavigationBlocked()
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         if (dy !== 0) root.moveCursor(dy)
@@ -691,6 +740,15 @@ Panel {
           width: parent.width
           visible: root.deviceSettingsOpen
           spacing: Style.space(8)
+          ToggleRow {
+            width: parent.width
+            label: "Enable trackpad"
+            description: "Turn the selected device on or off"
+            checked: root.touchpadEnabled
+            sectionName: "enable"
+            opacity: 1
+            onToggled: root.toggleTouchpad()
+          }
           Item {
             width: parent.width
             implicitHeight: scaleSpinner.implicitHeight
@@ -788,95 +846,56 @@ Panel {
           }
         }
 
-        Column {
-          id: settingsList
+        Text {
           width: parent.width
-          spacing: -1 // Adjacent row borders share exactly the same pixel.
-          // ========== Hero: Touchpad icon + status + power toggle ==========
-          SettingRow {
-            sectionName: "header"
-            width: parent.width
-            implicitHeight: heroContent.implicitHeight + Style.space(28)
-            Item {
-              id: heroContent
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.leftMargin: Style.space(10)
-              anchors.rightMargin: Style.space(10)
-              anchors.verticalCenter: parent.verticalCenter
-              implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, powerSwitch.implicitHeight)
+          text: root.heroStatusText
+          color: Qt.alpha(root.bar.foreground, 0.65)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
 
-              Text {
-                id: heroIcon
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.icon
+        Row {
+          width: parent.width
+          spacing: Style.space(4)
+          Repeater {
+            model: ["Pointer", "Scrolling", "Gestures"]
+            Controls.Button {
+              id: tabButton
+              required property string modelData
+              required property int index
+              width: (column.width - Style.space(8)) / 3
+              height: Style.space(34)
+              text: modelData
+              Accessible.name: modelData + " tab"
+              property bool selected: root.activeTab === modelData.toLowerCase()
+              onClicked: root.changeTab(modelData.toLowerCase())
+              contentItem: Text {
+                text: tabButton.text
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.display
-                opacity: root.touchpadEnabled ? 1.0 : 0.5
+                font.pixelSize: Style.font.body
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
               }
-
-              ToggleSwitch {
-                id: powerSwitch
-                visible: root.deviceName !== ""
-                checked: root.touchpadEnabled
-                hasCursor: false
-                foreground: root.bar.foreground
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                onHovered: function(on) {
-                  if (on) {
-                    root.cursorActive = true
-                    root.focusSection = "header"
-                  }
-                }
-                onToggled: root.toggleTouchpad()
-
-                PanelToolTip {
-                  visible: powerSwitch.containsMouse
-                  text: root.touchpadEnabled ? "Disable touchpad" : "Enable touchpad"
-                  fontFamily: root.bar.fontFamily
-                }
-              }
-
-              Column {
-                id: heroLabels
-                anchors.left: heroIcon.right
-                anchors.leftMargin: Style.space(14)
-                anchors.right: parent.right
-                anchors.rightMargin: powerSwitch.visible ? powerSwitch.width + Style.space(12) : 0
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(2)
-
-                Text {
-                  text: "Trackpad Plus"
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.title
-                  font.bold: true
-                  elide: Text.ElideRight
-                  width: parent.width
-                }
-
-                Text {
-                  id: heroStatus
-                  text: root.heroStatusText.toUpperCase()
-                  color: Qt.darker(root.bar.foreground, 1.4)
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: 1.2
-                  elide: Text.ElideRight
-                  width: parent.width
-                }
+              background: Rectangle {
+                color: tabButton.selected ? root.selectedFill : root.hoverFill
+                border.width: 1
+                border.color: tabButton.selected || tabButton.activeFocus ? Color.accent : Qt.alpha(root.bar.foreground, 0.2)
               }
             }
           }
+        }
 
+        Column {
+          id: settingsList
+          visible: root.activeTab !== "gestures"
+          width: parent.width
+          spacing: -1 // Adjacent row borders share exactly the same pixel.
           // ========== Scroll speed slider ==========
           SettingRow {
             sectionName: "scroll"
+            visible: root.activeTab === "scrolling"
             width: parent.width
             implicitHeight: scrollContent.implicitHeight + Style.space(28)
             Column {
@@ -1034,7 +1053,7 @@ Panel {
           SettingRow {
             sectionName: "pointer"
             width: parent.width
-            visible: root.pointerFeel.profile !== "mac" && root.pointerFeel.profile !== "custom"
+            visible: root.activeTab === "pointer" && root.pointerFeel.profile !== "mac" && root.pointerFeel.profile !== "custom"
             implicitHeight: pointerContent.implicitHeight + Style.space(28)
             Column {
               id: pointerContent
@@ -1185,6 +1204,7 @@ Panel {
           // ========== Toggle rows ==========
           SettingRow {
             sectionName: "acceleration"
+            visible: root.activeTab === "pointer"
             width: parent.width
             height: Style.space(58)
             foreground: root.bar.foreground
@@ -1224,6 +1244,7 @@ Panel {
             description: "Scroll content in the direction of finger movement"
             checked: root.naturalScroll
             sectionName: "natural"
+            visible: root.activeTab === "scrolling"
             enabled: root.touchpadEnabled
             onToggled: root.toggleNaturalScroll()
           }
@@ -1234,6 +1255,7 @@ Panel {
             description: "Tap the touchpad to click"
             checked: root.tapToClick
             sectionName: "tap"
+            visible: root.activeTab === "pointer"
             enabled: root.touchpadEnabled
             onToggled: root.toggleTapToClick()
           }
@@ -1244,6 +1266,7 @@ Panel {
             description: "Ignore touchpad input while typing"
             checked: root.disableWhileTyping
             sectionName: "typing"
+            visible: root.activeTab === "pointer"
             enabled: root.touchpadEnabled
             onToggled: root.toggleDisableWhileTyping()
           }
@@ -1254,9 +1277,36 @@ Panel {
             description: "Press with two fingers to right-click"
             checked: root.clickfingerBehavior
             sectionName: "clickfinger"
+            visible: root.activeTab === "pointer"
             enabled: root.touchpadEnabled
             onToggled: root.toggleClickfingerBehavior()
           }
+        }
+
+        GestureEditor {
+          id: gestureEditor
+          visible: root.activeTab === "gestures"
+          width: parent.width
+          foreground: root.bar.foreground
+          accent: Color.accent
+          fontFamily: root.bar.fontFamily
+          uiScale: Style.space(100) / 100
+          busy: gestureProc.running
+          canEdit: root.gestureCanEdit
+          canRestore: root.gestureCanRestore
+          hymission: root.gestureHymission
+          companion: root.gestureCompanion
+          previewBusy: overviewProc.running
+          previewText: root.overviewPreviewText
+          onPreviewRequested: root.requestOverview(true)
+          onOverviewStatusRequested: root.requestOverview(false)
+          onHymissionInfoRequested: Qt.openUrlExternally("https://github.com/gfhdhytghd/hymission#installation")
+          statusText: root.gestureStatus
+          errorText: root.gestureError
+          onApplyRequested: function(settings) { root.runGestureAction("set", settings) }
+          onRestoreRequested: root.runGestureAction("restore")
+          onRefreshRequested: root.refreshGestures()
+          onBackRequested: { root.changeTab("pointer"); keyCatcher.forceActiveFocus() }
         }
 
         Text {

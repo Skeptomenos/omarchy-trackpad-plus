@@ -2,6 +2,7 @@
 import fcntl
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -41,10 +42,24 @@ from pathlib import Path
 root = Path(os.environ['TRACKPAD_TEST_ROOT'])
 if sys.argv[1] == 'devices':
     print((root / 'devices.json').read_text())
+elif sys.argv[1] == 'plugin':
+    print((root / 'plugins.json').read_text() if (root / 'plugins.json').exists() else '[]')
 elif sys.argv[1] == 'getoption':
     option = sys.argv[2].split(':')[-1]
+    if option in ('workspace_swipe_distance', 'workspace_swipe_invert'):
+        settings = dict(distance=300, invert=False)
+        config = Path(os.environ.get('XDG_CONFIG_HOME', root / 'config')) / 'hypr/input.lua'
+        if config.exists():
+            for line in config.read_text().splitlines():
+                if line.startswith('-- {'):
+                    data = json.loads(line[3:])
+                    if 'settings' in data: settings = data['settings']
+        print(json.dumps({'int': settings['distance']} if option.endswith('distance')
+                         else {'bool': settings['invert']})); sys.exit(0)
     print(json.dumps({'float': 0.2} if option in ('sensitivity', 'scroll_factor')
                      else {'bool': option != 'natural_scroll'}))
+elif sys.argv[1] == 'configerrors':
+    print('')
 elif sys.argv[1] == 'reload':
     (root / 'reload.log').write_text(' '.join(sys.argv[2:]))
     print('ok')
@@ -62,6 +77,85 @@ else:
                                 env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
+
+    def test_overview_runtime_is_packaged_and_inspection_never_starts_it(self):
+        for name in ('manifest.json', 'trackpads.py', 'overview-control.py',
+                     'overview/shell.qml', 'overview/Session.qml', 'overview/lock-watch.py',
+                     'overview/Model.js', 'overview/Overview.qml', 'overview/WindowCard.qml',
+                     'overview/Preview.qml', 'overview/PreparedWallpaper.qml'):
+            self.assertTrue((self.plugin / name).is_file(), f'{name} must be tracked for installation')
+        runtime = self.root / 'runtime'
+        runtime.mkdir(mode=0o700)
+        marker = self.root / 'qs-started'
+        fake_qs = self.root / 'qs'
+        fake_qs.write_text('#!' + sys.executable + '\n'
+                           'import os\nfrom pathlib import Path\n'
+                           'Path(os.environ["TRACKPAD_TEST_ROOT"], "qs-started").touch()\n'
+                           'raise SystemExit(87)\n')
+        fake_qs.chmod(0o700)
+        env = dict(self.env, XDG_RUNTIME_DIR=str(runtime),
+                   HYPRLAND_INSTANCE_SIGNATURE='trackpad-install-test', WAYLAND_DISPLAY='wayland-test')
+        for operation in ('status', 'close', 'stop'):
+            result = subprocess.run([sys.executable, '-B', str(self.plugin / 'overview-control.py'), operation],
+                                    env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            response = json.loads(result.stdout)
+            self.assertTrue(response['installed'])
+            self.assertFalse(response['reachable'])
+            self.assertFalse(response['opened'])
+            self.assertFalse(response['rendered'])
+        self.assertFalse(marker.exists(), 'Inspection/cleanup must not execute Quickshell')
+        self.assertEqual(list(runtime.iterdir()), [])
+        self.assertFalse((self.root / 'state').exists(), 'Overview commands must not initialize pointer settings')
+        self.assertFalse((self.root / 'eval.log').exists())
+
+    def test_gesture_cli_adopts_applies_and_restores_original_input(self):
+        config = self.root / 'config'
+        (config / 'hypr').mkdir(parents=True)
+        source = '-- Keep this input setting\nhl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })\n'
+        input_file = config / 'hypr/input.lua'
+        input_file.write_text(source)
+        env = dict(self.env, XDG_CONFIG_HOME=str(config))
+        def gesture(*args):
+            result = subprocess.run([sys.executable, '-B', str(self.plugin / 'gestures.py'), *args],
+                                    env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+        initial = gesture('state')
+        self.assertTrue(initial['can_edit'])
+        self.assertFalse(initial['managed'])
+        self.assertFalse(initial['hymission']['available'])
+        denied = subprocess.run([sys.executable, '-B', str(self.plugin/'gestures.py'), 'set',
+                                 json.dumps(dict(enabled=True, fingers=3, distance=300, invert=False, overview=True))],
+                                env=env, capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertIn('HyMission', denied.stdout)
+        self.assertEqual(input_file.read_text(), source)
+        saved = gesture('set', json.dumps(dict(enabled=True, fingers=4, distance=500, invert=True)))
+        self.assertTrue(saved['managed'])
+        self.assertEqual(saved, gesture('state'))
+        self.assertEqual(saved['settings']['fingers'], 4)
+        (self.root/'plugins.json').write_text('[{"name":"hymission","version":"0.7.0"}]')
+        if platform.machine().lower() not in ('x86_64', 'amd64'):
+            # Exercise the installed CLI on ARM too, even with a loaded provider.
+            before = input_file.read_bytes()
+            denied = subprocess.run([sys.executable, '-B', str(self.plugin/'gestures.py'), 'set',
+                                     json.dumps(dict(saved['settings'], overview=True))],
+                                    env=env, capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertIn('function hooks', denied.stdout)
+            self.assertEqual(input_file.read_bytes(), before)
+            self.assertFalse(gesture('state')['hymission']['supported'])
+            self.assertFalse(gesture('restore')['managed'])
+            self.assertEqual(input_file.read_text(), source)
+            return
+        overview = gesture('set', json.dumps(dict(saved['settings'], overview=True)))
+        self.assertTrue(overview['hymission']['available'])
+        self.assertTrue(overview['settings']['overview'])
+        self.assertIn('hl.plugin.hymission.gesture', input_file.read_text())
+        self.assertEqual(overview, gesture('state'))
+        self.assertFalse(gesture('restore')['managed'])
+        self.assertEqual(input_file.read_text(), source)
 
     def test_invalid_command_does_not_initialize_or_contact_compositor(self):
         for args in [('bad',), ('state', 'extra'), ('set', 'apple', 'scroll_factor', '0'),

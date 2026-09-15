@@ -9,10 +9,11 @@ import tempfile
 
 repo = Path(__file__).resolve().parent
 lint = shutil.which('qmllint') or '/usr/lib/qt6/bin/qmllint'
+sources = sorted([*repo.glob('*.qml'), *(repo / 'overview').rglob('*.qml')])
 with tempfile.TemporaryDirectory(prefix='trackpad-plus-lint-') as directory:
     (Path(directory) / 'qs').symlink_to('/usr/share/omarchy/shell', target_is_directory=True)
     result = subprocess.run([lint, '-I', directory, '--json', '-',
-                             *map(str, sorted(repo.glob('*.qml')))],
+                             *map(str, sources)],
                             capture_output=True, text=True, timeout=30)
     if not result.stdout:
         raise SystemExit(result.stderr or 'qmllint produced no results')
@@ -29,7 +30,10 @@ with tempfile.TemporaryDirectory(prefix='trackpad-plus-lint-') as directory:
             host_signal = warning['id'] == 'signal-handler-parameters' and message == (
                 'Type QProcess::ExitStatus of parameter exitStatus in signal called exited was not found, '
                 'but is required to compile onExited. Did you add all imports and dependencies?')
-            if Path(source['filename']).name == 'Panel.qml' and warning['type'] == 'warning' and (host_property or host_signal):
+            relative = Path(source['filename']).relative_to(repo).as_posix()
+            allowed = (relative == 'Panel.qml' and (host_property or host_signal)) or (
+                relative in ('overview/Session.qml', 'overview/shell.qml') and host_signal)
+            if warning['type'] == 'warning' and allowed:
                 known += 1
             else:
                 failures.append(f"{source['filename']}:{warning['line']}: {message}")
