@@ -157,6 +157,16 @@ still slides down. The companion preloads and retains a bounded wallpaper image
 between openings; window previews are released on close. If wallpaper loading
 fails or exceeds one second, a stable theme-colored fallback is shown for that opening.
 
+### Built with Quickshell
+
+The built-in overview is powered by [Quickshell](https://quickshell.org/), led by
+[outfoxxed](https://outfoxxed.me/) and its contributors. Its
+[Hyprland integration](https://quickshell.org/docs/v0.3.1/types/Quickshell.Hyprland/Hyprland/)
+provides workspace, window, and monitor information; its
+[Wayland screencopy API](https://quickshell.org/docs/v0.3.1/types/Quickshell.Wayland/ScreencopyView/)
+provides the window snapshots. Thank you to the Quickshell contributors for the
+building blocks that make this overview possible.
+
 ### Overview inspiration: HyMission
 
 We learned from [HyMission](https://github.com/gfhdhytghd/hymission), created by
