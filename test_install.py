@@ -191,6 +191,36 @@ else:
         # The X280 reports the same Synaptics family as a different part number.
         self.assert_lenovo_touchpad_round_trip('synaptics-tm3381-002')
 
+    def test_spi_and_intel_apple_discovery_persist_without_touching_other_devices(self):
+        for name in ('apple-spi-trackpad', 'bcm5974', 'apple-spi-touchpad',
+                     'apple-inc.-apple-internal-keyboard-/-trackpad-1'):
+            self.devices.write_text(json.dumps({'mice': [{'name': name}, {'name': 'usb-mouse'}]}))
+            initial = self.call('state')['devices']
+            self.assertEqual([row['id'] for row in initial], ['apple'])
+            self.assertTrue(initial[0]['connected'])
+            self.call('set', 'apple', 'scroll_factor', '0.15')
+            updated = self.call('state')['devices'][0]
+            self.assertIn(name, updated['names'])
+            self.assertEqual(updated['settings']['scroll_factor'], 0.15)
+            self.assertNotIn('usb-mouse', (self.root / 'eval.log').read_text())
+
+    def test_legacy_spi_upgrade_preserves_preferences_across_process_restarts(self):
+        self.devices.write_text('{"mice": [{"name": "apple-spi-trackpad"}]}')
+        self.call('state')
+        self.call('set', 'apple', 'scroll_factor', '0.34')
+        state_file = self.root / 'state/omarchy/local-touchpads/settings.json'
+        state = json.loads(state_file.read_text())
+        group = state['devices'].pop('apple')
+        group.update(id='apple-spi-trackpad', label='apple-spi-trackpad')
+        state['devices']['apple-spi-trackpad'] = group
+        state_file.write_text(json.dumps(state))
+        before = (self.root / 'eval.log').read_bytes()
+        after = self.call('state')
+        self.assertEqual(after['devices'][0]['id'], 'apple')
+        self.assertEqual(after['devices'][0]['settings']['scroll_factor'], 0.34)
+        self.assertEqual(after, self.call('state'))
+        self.assertEqual((self.root / 'eval.log').read_bytes(), before)
+
     def test_future_state_is_preserved_byte_for_byte(self):
         self.call('state')
         state = self.root / 'state/omarchy/local-touchpads/settings.json'

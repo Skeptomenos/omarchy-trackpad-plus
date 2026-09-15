@@ -62,13 +62,19 @@ use **YYYY.MM.DD.N**: release date followed by a revision starting at 0 and
 increasing for additional releases that day. The tab screenshots show
 **2026.09.14.1**; the footer reflects the version you have installed.
 
-The built-in Apple Silicon trackpad (`apple-mtp-multi-touch`) and Apple Magic
-Trackpad interfaces share one set of Apple settings. The known
+Built-in Apple trackpads are recognized as Apple: Apple Silicon
+(`apple-mtp-multi-touch`, `apple-spi-trackpad`) and Intel Macs (`bcm5974`,
+`apple-spi-touchpad`, `apple-inc.-apple-internal-keyboard-/-trackpad-1`).
+Fresh installations group them with Apple Magic Trackpad interfaces.
+If an upgrade finds a previously saved built-in trackpad group, it keeps every
+setting and Restore previous entry. A lone group becomes **Apple**; if other
+Apple preferences already exist, the older group stays separate as
+**Apple (device name)** so neither set of preferences is overwritten. The known
 Dell touchpad is labeled Dell; other devices containing `touchpad` or `trackpad`
 in their Hyprland name are listed by that name. Disconnected devices retain their
 saved settings, and newly attached devices are discovered during state refreshes.
-Lenovo Synaptics touchpads are recognized by their `TM` part number even though
-names like `synaptics-tm3512-010` and `synaptics-tm3381-002` contain neither
+Synaptics TM touchpads (including Lenovo and HP models) are recognized by their
+`TM` part number even though names like `synaptics-tm3512-010` and `synaptics-tm3381-002` contain neither
 word. The part number is matched against the whole name, so a Synaptics mouse or
 any name carrying a suffix cannot match it. The separate TrackPoint is excluded.
 Other trackpads whose names omit both words may still need an explicit detection
