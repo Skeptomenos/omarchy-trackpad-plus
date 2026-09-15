@@ -52,6 +52,7 @@ def wait_for(check, seconds=4):
 # Inject observability only into a temporary copy, never the installed shell.
 # Pixels are sampled in memory and restricted to our constant-title fixtures.
 INSTRUMENT = r'''
+    property int testBadWallpaperFrames: 0
     TestResult { id: pixels }
     function testCards() {
         const view = root.testOverview();
@@ -150,12 +151,13 @@ INSTRUMENT = r'''
             let ready = false;
             function walk(item) {
                 if (!item) return;
-                if (item.objectName === "desktopWallpaper") ready = item.status === Image.Ready;
+                if (item.objectName === "preparedWallpaper") ready = item.ready;
                 for (let child of item.children || []) walk(child);
             }
-            walk(root.testOverview());
+            if (overlay.item) walk(overlay.item.contentItem);
             return ready;
         }
+        function badWallpaperFrames(): int { return root.testBadWallpaperFrames; }
     }
 }
 '''
@@ -187,6 +189,10 @@ def main():
         shell = base / 'overview/shell.qml'
         source = shell.read_text().replace('import QtQuick\n', 'import QtQuick\nimport QtTest\n', 1)
         source = source.replace('    LazyLoader {', '    LazyLoader {\n        id: overlay')
+        frame_handler = 'if (panel.visible) { session.mapped'
+        assert frame_handler in source
+        source = source.replace(frame_handler,
+            'if (panel.visible && !preparedWallpaper.preparedForOpen) root.testBadWallpaperFrames++;\n                    ' + frame_handler)
         shell.write_text(source.rstrip()[:-1] + INSTRUMENT)
         companion = control.Controller(base)
         try:
@@ -287,6 +293,9 @@ def main():
             evaluate('hl.dispatch(hl.dsp.focus({workspace="%d"}))' % original['id'])
             companion.execute('close')
             print('PASS: wallpaper loaded; workspace and + tiles enter the desktop in one click')
+            assert ipc('backdropReady') == 'true', 'Closing discarded the prepared wallpaper'
+            assert ipc('badWallpaperFrames') == '0', 'A visible frame used an unprepared wallpaper'
+            print('PASS: wallpaper ready on every visible frame and retained while hidden')
             print('PASS: current/inactive workspace pixels, exact window selection, workspace selection, close/focus, external workspace change')
             before = usage(pid)
             peak = dict(before)
@@ -302,6 +311,8 @@ def main():
                 companion.execute('close')
                 state = companion.execute('status')
                 assert not state['mapped'] and not state['rendered'] and state['captures'] == 0
+                assert ipc('backdropReady') == 'true'
+                assert ipc('badWallpaperFrames') == '0'
                 time.sleep(.06)
             if latencies:
                 print(json.dumps(dict(cycles=args.cycles, coldMs=cold, warmMedianMs=round(statistics.median(latencies[:30])),

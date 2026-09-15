@@ -147,7 +147,7 @@ class GestureTests(unittest.TestCase):
         self.assertEqual(g.parse(source)[2], settings)
         self.assertNotIn('hl.plugin.hymission', source)
         lua = ('local native, commands = {}, {}\n'
-               'hl={config=function() end, gesture=function(d) table.insert(native,d) end, '
+               'hl={config=function() end, layer_rule=function(r) assert(r.match.namespace == "^trackpad-plus-overview$" and r.no_anim and r.animation == "none") end, gesture=function(d) table.insert(native,d) end, '
                'exec_cmd=function(c) table.insert(commands,c) end}\n' + source +
                '\nassert(#native == 3 and native[1].direction == "horizontal" and native[1].action == "workspace")'
                '\nassert(native[2].direction == "up" and native[3].direction == "down")'
@@ -160,7 +160,7 @@ class GestureTests(unittest.TestCase):
                '\nassert(native[3].action.start == nil)\nnative[3].action.finish({cancelled=false})'
                '\nassert(#commands == 2 and commands[2] == ' + json.dumps(g.COMPANION_COMMAND + 'close') + ')')
         subprocess.run(['lua', '-'], input=lua, text=True, capture_output=True, check=True)
-        self.assertIn('"version": 6', source)
+        self.assertIn('"version": 7', source)
         g.restore()
         self.assertEqual(g.INPUT.read_text(), INPUT)
 
@@ -182,7 +182,7 @@ hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert 
             self.assertEqual(g.INPUT.read_text(), historical)
             if mode == 'migrate':
                 g.change(parsed[2])
-                self.assertIn('"version": 6', g.INPUT.read_text())
+                self.assertIn('"version": 7', g.INPUT.read_text())
                 self.assertEqual(g.parse(g.INPUT.read_text())[3], BINDING + '\n')
             elif mode == 'failed-migration':
                 with patch.object(g, 'reload_checked', side_effect=[RuntimeError('unsupported callback API'), None]):
@@ -212,7 +212,7 @@ hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert 
                 g.change(settings)
         self.assertEqual(g.INPUT.read_text(), fixture)
         g.change(settings)
-        self.assertIn('"version": 6', g.INPUT.read_text())
+        self.assertIn('"version": 7', g.INPUT.read_text())
         self.assertEqual(g.parse(g.INPUT.read_text())[2], settings)
         g.restore()
         self.assertEqual(g.INPUT.read_text(), '')
@@ -255,6 +255,22 @@ hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert 
         self.assertEqual(g.parse(g.INPUT.read_text())[2]['overview_provider'], 'trackpad-plus')
         g.restore()
         self.assertEqual(g.INPUT.read_text(), INPUT)
+
+    def test_schema_six_preserves_bytes_until_explicit_edit(self):
+        fixture = '-- BEGIN Trackpad Plus gestures\n-- {"original": "", "separator": "", "settings": {"distance": 300, "enabled": true, "fingers": 3, "invert": false, "overview": true, "overview_provider": "trackpad-plus"}, "version": 6}\nhl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })\nhl.gesture({ fingers = 3, direction = "up", action = { start = function() hl.exec_cmd("python3 -B \\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus/overview-control.py\\" open") end } })\nhl.gesture({ fingers = 3, direction = "down", action = { finish = function(event) if not event.cancelled then hl.exec_cmd("python3 -B \\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus/overview-control.py\\" close") end end } })\nhl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert = false } })\n-- END Trackpad Plus gestures\n'
+        g.INPUT.write_text(fixture)
+        parsed = g.parse(fixture)
+        self.assertEqual(g.block(parsed[2], parsed[3], version=6), fixture)
+        self.assertNotIn('hl.layer_rule', fixture)
+        g.inspect(fixture)
+        self.assertEqual(g.INPUT.read_text(), fixture)
+        g.change(parsed[2])
+        source = g.INPUT.read_text()
+        self.assertIn('"version": 7', source)
+        self.assertIn('namespace = "^trackpad-plus-overview$"', source)
+        self.assertIn('no_anim = true', source)
+        g.change(dict(parsed[2], overview=False))
+        self.assertNotIn('hl.layer_rule', g.INPUT.read_text())
 
     def test_schema_five_rejects_modified_callback_or_provider(self):
         g.change(dict(self.settings, overview=True, overview_provider='trackpad-plus'))

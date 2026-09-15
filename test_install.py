@@ -82,7 +82,7 @@ else:
         for name in ('manifest.json', 'trackpads.py', 'overview-control.py',
                      'overview/shell.qml', 'overview/Session.qml', 'overview/lock-watch.py',
                      'overview/Model.js', 'overview/Overview.qml', 'overview/WindowCard.qml',
-                     'overview/Preview.qml'):
+                     'overview/Preview.qml', 'overview/PreparedWallpaper.qml'):
             self.assertTrue((self.plugin / name).is_file(), f'{name} must be tracked for installation')
         runtime = self.root / 'runtime'
         runtime.mkdir(mode=0o700)

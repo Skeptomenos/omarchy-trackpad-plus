@@ -238,5 +238,51 @@ TestCase {
         tryVerify(() => states !== null);
         compare(states, "capturing,capturing,waiting");
     }
+    Component { id: wallpaperComponent; PreparedWallpaper { width: 1100; height: 850 } }
+    function test_prepared_wallpaper_first_frame_and_reopen() {
+        const wallpaper = createTemporaryObject(wallpaperComponent, test, {
+            source: Qt.resolvedUrl("assets/screenshots/trackpad-controls.png"), requested: true
+        });
+        const statusAtConstruction = wallpaper.imageStatus;
+        if (statusAtConstruction !== Image.Ready) verify(!wallpaper.presentable);
+        tryCompare(wallpaper, "ready", true);
+        verify(wallpaper.presentable);
+        const first = grabImage(wallpaper).pixel(20, 600);
+        // Mapping can reload the image for the actual window scale. Once shown,
+        // retain its pixels instead of hiding/remapping the window in a loop.
+        wallpaper.resolving = true;
+        compare(wallpaper.ready, false);
+        compare(wallpaper.presentable, true);
+        wallpaper.resolving = false;
+        wallpaper.requested = false;
+        compare(wallpaper.presentable, false);
+        compare(wallpaper.imageStatus, Image.Ready);
+        wallpaper.requested = true;
+        compare(wallpaper.presentable, true);
+        compare(grabImage(wallpaper).pixel(20, 600), first);
+    }
+    function test_wallpaper_timeout_is_stable_and_close_cancels_presentation() {
+        const wallpaper = createTemporaryObject(wallpaperComponent, test, {
+            requested: true, resolving: true, fallbackDelay: 30
+        });
+        compare(wallpaper.presentable, false);
+        tryCompare(wallpaper, "fallbackLatched", true);
+        const fallback = grabImage(wallpaper).pixel(20, 600);
+        wallpaper.source = Qt.resolvedUrl("assets/screenshots/trackpad-controls.png");
+        wallpaper.resolving = false;
+        tryCompare(wallpaper, "ready", true);
+        compare(grabImage(wallpaper).pixel(20, 600), fallback);
+        wallpaper.requested = false;
+        compare(wallpaper.presentable, false);
+        compare(wallpaper.fallbackLatched, false);
+        wallpaper.resolving = true;
+        wallpaper.requested = true;
+        compare(wallpaper.presentable, false);
+        wallpaper.requested = false; // Also represents the lock guard becoming false.
+        wallpaper.resolving = false;
+        wait(50);
+        compare(wallpaper.presentable, false);
+        compare(wallpaper.fallbackLatched, false);
+    }
     Component { id: spyComponent; SignalSpy {} }
 }

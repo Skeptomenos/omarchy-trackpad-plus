@@ -115,6 +115,7 @@ ShellRoot {
     }
     Process {
         id: wallpaper
+        running: true
         command: ["readlink", "-e", "--", (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/current/background"]
         onStarted: wallpaperDeadline.restart()
         stdout: StdioCollector { id: wallpaperPath; waitForEnd: true }
@@ -219,36 +220,54 @@ ShellRoot {
         }
     }
     LazyLoader {
-        active: session.opened
+        active: true
         component: PanelWindow {
             id: panel
-            screen: Quickshell.screens.find(s => s.name === root.monitorName) || null
+            readonly property string targetMonitor: root.monitorName || (Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : "")
+            screen: Quickshell.screens.find(s => s.name === targetMonitor) || Quickshell.screens[0] || null
+            visible: session.opened && session.lockState === "unlocked" && preparedWallpaper.presentable
             anchors { top: true; bottom: true; left: true; right: true }
             exclusionMode: ExclusionMode.Ignore
             color: root.backgroundColor
             WlrLayershell.namespace: "trackpad-plus-overview"
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
-            Overview {
-                id: overview
+            PreparedWallpaper {
+                id: preparedWallpaper
+                // Screen dimensions are available before the layer is mapped.
+                width: panel.screen ? panel.screen.width : 1
+                height: panel.screen ? panel.screen.height : 1
+                pixelRatio: panel.screen ? panel.screen.devicePixelRatio : 1
+                source: root.wallpaperSource
+                requested: session.opened && session.lockState === "unlocked"
+                resolving: wallpaper.running
+                fallbackColor: root.backgroundColor
+            }
+            Loader {
                 anchors.fill: parent
-                snapshot: root.snapshot
-                sourceFor: root.sourceFor
-                foreground: root.foreground
-                backgroundColor: root.backgroundColor
-                accent: root.accent
-                wallpaperSource: root.wallpaperSource
-                onInFlightChanged: session.captures = inFlight
-                onReadyCountChanged: { session.ready = readyCount; if (readyCount > 0 && session.mapped) session.rendered = true; }
-                onDismiss: session.dismiss("escape")
-                onSelected: (kind, key) => root.select(kind, key)
-                onCreateWorkspace: root.createWorkspace()
-                Component.onCompleted: forceActiveFocus()
+                active: panel.visible
+                sourceComponent: Overview {
+                    id: overview
+                    anchors.fill: parent
+                    paintWallpaper: false
+                    snapshot: root.snapshot
+                    sourceFor: root.sourceFor
+                    foreground: root.foreground
+                    backgroundColor: root.backgroundColor
+                    accent: root.accent
+                    wallpaperSource: root.wallpaperSource
+                    onInFlightChanged: session.captures = inFlight
+                    onReadyCountChanged: { session.ready = readyCount; if (readyCount > 0 && session.mapped) session.rendered = true; }
+                    onDismiss: session.dismiss("escape")
+                    onSelected: (kind, key) => root.select(kind, key)
+                    onCreateWorkspace: root.createWorkspace()
+                    Component.onCompleted: forceActiveFocus()
+                }
             }
             Connections {
                 target: panel.contentItem.Window.window
                 function onFrameSwapped() {
-                    if (session.opened) { session.mapped = true; session.rendered = overview.readyCount > 0; session.result = session.rendered ? "rendered" : "opened"; }
+                    if (panel.visible) { session.mapped = true; session.rendered = session.ready > 0; session.result = session.rendered ? "rendered" : "opened"; }
                 }
             }
         }

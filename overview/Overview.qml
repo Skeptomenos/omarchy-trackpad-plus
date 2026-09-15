@@ -9,6 +9,7 @@ FocusScope {
     property var sourceFor: function(entry) { return null; }
     property bool captureEnabled: true
     property url wallpaperSource: ""
+    property bool paintWallpaper: true
     property color foreground: "#ded4b8"
     property color backgroundColor: "#293238"
     property color accent: "#80b9b2"
@@ -95,19 +96,20 @@ FocusScope {
         const g = entry.geometry;
         return g && g.width > 0 && g.height > 0 ? g.width * view.width / (g.height * view.height) : 1.6;
     }
-    Rectangle { anchors.fill: parent; color: view.backgroundColor }
+    Rectangle { anchors.fill: parent; color: view.backgroundColor; visible: view.paintWallpaper }
     component WallpaperImage: Image {
         source: view.wallpaperSource
         sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
-        cache: false
+        cache: true
     }
     WallpaperImage {
         objectName: "desktopWallpaper"
         anchors.fill: parent
+        visible: view.paintWallpaper
+        source: view.paintWallpaper ? view.wallpaperSource : ""
     }
-    Rectangle { anchors.fill: parent; color: "#16000000" }
     Item {
         id: topPanel
         objectName: "workspacePanel"

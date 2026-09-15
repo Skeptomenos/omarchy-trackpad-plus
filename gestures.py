@@ -171,7 +171,7 @@ def find_binding(source):
 
 def block(settings, original, separator='', version=3):
     validate(settings)
-    if version in (4, 5, 6):
+    if version in (4, 5, 6, 7):
         settings = dict(normalized(settings), overview_provider=overview_provider(settings))
     elif version == 3 and 'overview_provider' not in settings:
         settings = normalized(settings)
@@ -187,6 +187,8 @@ def block(settings, original, separator='', version=3):
     lines = [BEGIN.rstrip(), '-- ' + json.dumps(data, sort_keys=True)]
     horizontal = 'hl.gesture({ fingers = %d, direction = "horizontal", action = "workspace" })' % settings['fingers']
     if settings.get('overview') and overview_provider(settings) == 'trackpad-plus':
+        if version >= 7:
+            lines.append('hl.layer_rule({ match = { namespace = "^trackpad-plus-overview$" }, no_anim = true, animation = "none" })')
         if settings['enabled']:
             lines.append(horizontal)
         for direction, operation in [('up', 'open'), ('down', 'close')]:
@@ -247,7 +249,7 @@ def parse(source):
         try:
             data = json.loads(fragment.splitlines()[1][3:])
             if (set(data) != {'version', 'settings', 'original', 'separator'}
-                    or type(data['version']) is not int or data['version'] not in (2, 3, 4, 5, 6)
+                    or type(data['version']) is not int or data['version'] not in (2, 3, 4, 5, 6, 7)
                     or not isinstance(data['original'], str)):
                 raise ValueError('Unsupported gesture block version')
             if fragment != block(data['settings'], data['original'], data['separator'], data['version']):
@@ -385,7 +387,7 @@ def change(settings):
     if not status['can_edit']:
         raise ValueError(status['message'])
     managed = parse(before)
-    # Only an explicit edit emits schema 6. An older caller editing a managed
+    # Only an explicit edit emits schema 7. An older caller editing a managed
     # block retains its current provider instead of silently reverting it.
     settings['overview_provider'] = settings.get('overview_provider', overview_provider(managed[2]) if managed else 'hymission')
     if settings['overview']:
@@ -416,7 +418,7 @@ def change(settings):
             if fields['direction'] in ('vertical', 'up', 'down', 'swipe'):
                 raise ValueError('An existing vertical gesture conflicts with overview; manage it in your Hyprland config')
     separator = '\n' if base and not base.endswith('\n') else ''
-    after = base + separator + block(settings, original, separator, version=6)
+    after = base + separator + block(settings, original, separator, version=7)
     # Validate the complete result before writing; appending to dynamic Lua is unsafe.
     parse(after)
     transact(before, after, expected=settings)
