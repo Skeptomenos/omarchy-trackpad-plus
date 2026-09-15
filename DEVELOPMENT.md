@@ -67,9 +67,17 @@ This release identifier is separate from the backend's settings schema version.
 - `touchpad-state` / `touchpad-sensitivity`: inherited legacy CLI helpers,
   retained for compatibility; the current panel uses `trackpads.py` instead.
 
-The `apple` settings group intentionally retains the original grouping of Apple
-Magic Trackpad interfaces and now recognizes the built-in Apple trackpad. These
-Apple devices share settings when connected together. The `dell` ID recognizes
+Fresh `apple` settings groups include Magic Trackpad interfaces and the exact
+built-in names in `BUILTIN_APPLE` (Apple Silicon and Intel). Migration rekeys a
+lone legacy built-in group without changing its settings, undo history, or Lua.
+When another Apple group already exists, both groups stay separate, including
+unconfigured groups; discovery routes each remembered name to its saved owner.
+Multiple legacy groups also stay separate. No preference wins by dictionary order.
+Refresh commits validated JSON before reconciling generated rules, so a newly
+attached interface inherits a configured group's settings immediately; a failed
+apply or rule write retries on the next read. Normal refresh applies only changed
+groups; interrupted saves reconcile all configured rules from authoritative JSON.
+The `dell` ID recognizes
 one known Dell hardware name; other trackpads use their compositor device name.
 New groups have `configured: false` until their first explicit edit; generated
 Lua omits these groups. Missing `configured` means true for compatibility with
