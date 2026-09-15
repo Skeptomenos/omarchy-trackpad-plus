@@ -5,6 +5,7 @@ import os
 import platform
 from pathlib import Path
 import re
+import stat
 import sys
 import subprocess
 import importlib.util
@@ -305,16 +306,96 @@ def inspect(source):
     return result
 
 
+def config_target(path):
+    """Resolve config links through trusted directories; state stays no-follow.
+
+    Stow may link a file or an entire directory. Resolve each link explicitly
+    under the same directory ownership checks used for state, then let the
+    no-follow reader/writer validate and access the final target.
+    """
+    path = Path(path)
+    if not path.is_absolute():
+        raise ValueError('Hyprland configuration paths must be absolute')
+    pending = list(path.parts[1:])
+    resolved, links = Path('/'), 0
+    directory = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        while pending:
+            part = pending.pop(0)
+            if part == '..':
+                child = os.open('..', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                os.close(directory)
+                directory = child
+                resolved = resolved.parent
+                continue
+            info = os.stat(part, dir_fd=directory, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode):
+                links += 1
+                if links > 40:
+                    raise ValueError('Hyprland configuration has a symlink loop or too many links')
+                if info.st_uid not in (0, os.getuid()):
+                    raise ValueError('Hyprland configuration link is owned by another user')
+                target = Path(os.readlink(part, dir_fd=directory))
+                if target.is_absolute():
+                    child = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+                    os.close(directory)
+                    directory = child
+                    resolved = Path('/')
+                    pending = list(target.parts[1:]) + pending
+                else:
+                    pending = list(target.parts) + pending
+                continue
+            if pending or stat.S_ISDIR(info.st_mode):
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                os.close(directory)
+                directory = child
+                info = os.fstat(directory)
+                shared_sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+                if info.st_uid not in (0, os.getuid()) or (info.st_mode & 0o022 and not shared_sticky):
+                    raise ValueError('Hyprland configuration directories must not be writable by other users')
+            resolved /= part
+    finally:
+        os.close(directory)
+    return resolved
+
+
+def config_files():
+    """Include Stow directory links in conflict checks without following cycles."""
+    root = config_target(CONFIG)
+    pending, seen, count = [root], set(), 0
+    while pending:
+        alias = pending.pop()
+        count += 1
+        if count > 4096:
+            raise ValueError('Too many Hyprland configuration entries to check safely')
+        try:
+            path = config_target(alias)
+            info = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            # A vanished wallpaper or backup cannot contain active gestures.
+            # Missing config entries and all trust failures still block Apply.
+            if alias == root or alias.suffix in ('.lua', '.conf'):
+                raise
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            if path in seen:
+                continue
+            seen.add(path)
+            with core.state_directory(path) as directory:
+                pending.extend(path / name for name in os.listdir(directory))
+        elif alias.suffix in ('.lua', '.conf'):
+            yield path, alias.suffix
+
+
 def check_environment():
     # Reject known conflicts from other local modules; never edit those files.
-    for path in CONFIG.rglob('*'):
-        if path.suffix not in ('.lua', '.conf'):
-            continue
-        if path == INPUT:
+    input_target = config_target(INPUT)
+    for path, suffix in config_files():
+        if path == input_target:
             continue
         source = core.read_state_file(path) or ''
         conflict = (re.search(r'^\s*(?:gesture|workspace_swipe)\s*=', source, re.MULTILINE)
-                    if path.suffix == '.conf' else re.search(r'\bgesture\b', masked(source, strings=True)))
+                    if suffix == '.conf' else re.search(r'\bgesture\b', masked(source, strings=True)))
         if conflict:
             raise ValueError('Gestures also exist in another Hyprland file; manage them there to avoid conflicts')
     core.hypr('eval', 'assert(package.loaded["hypr.input"], "Trackpad Plus requires the hypr.input module")')
@@ -338,31 +419,47 @@ def recover():
     if raw is None:
         return
     data = json.loads(raw)
-    if (not isinstance(data, dict) or set(data) != {'version', 'before', 'after'}
-            or type(data['version']) is not int or data['version'] != 1
+    if (not isinstance(data, dict) or type(data.get('version')) is not int
+            or data['version'] not in (1, 2)
+            or set(data) != ({'version', 'before', 'after'} if data['version'] == 1
+                             else {'version', 'before', 'after', 'target'})
             or not all(isinstance(data[key], str) for key in ('before', 'after'))):
         raise ValueError('Invalid gesture recovery journal')
-    current = core.read_state_file(INPUT)
+    target = config_target(INPUT)
+    # Old journals could only be created for a non-linked config. Never replay
+    # either journal format onto a newly selected dotfile, even with equal text.
+    expected_target = data['target'] if data['version'] == 2 else str(INPUT)
+    if str(target) != expected_target:
+        raise ValueError('Input configuration target changed during recovery; restore the original link and retry')
+    current = core.read_state_file(target)
     if current not in (data['before'], data['after']):
         raise ValueError('Input configuration changed during recovery; preserve it and restore the backup manually')
     if current != data['before']:
-        core.atomic_write(INPUT, data['before'])
+        core.atomic_write(target, data['before'])
     reload_checked()
+    if config_target(INPUT) != target:
+        raise ValueError('Input configuration target changed during recovery; restore the original link and retry')
     clear_journal()
 
 
-def transact(before, after, expected=None):
+def transact(before, after, target, expected=None):
     errors = core.hypr('configerrors').strip()
     if errors:
         raise ValueError('Resolve existing Hyprland configuration errors before editing gestures')
-    if core.read_state_file(INPUT) != before:
+    if config_target(INPUT) != target:
+        raise ValueError('Input configuration target changed; refresh and try again')
+    if core.read_state_file(target) != before:
         raise ValueError('Input configuration changed; refresh and try again')
     if core.read_state_file(BACKUP) is None:
         core.atomic_write(BACKUP, before)
-    core.atomic_write(JOURNAL, json.dumps(dict(version=1, before=before, after=after)))
+    core.atomic_write(JOURNAL, json.dumps(dict(version=2, before=before, after=after, target=str(target))))
     try:
-        core.atomic_write(INPUT, after)
+        if config_target(INPUT) != target:
+            raise ValueError('Input configuration target changed; refresh and try again')
+        core.atomic_write(target, after)
         reload_checked()
+        if config_target(INPUT) != target:
+            raise ValueError('Input configuration target changed during reload')
         if expected is not None:
             actual = runtime_settings()
             if any(actual[key] != expected[key] for key in ('distance', 'invert')):
@@ -380,7 +477,8 @@ def transact(before, after, expected=None):
 
 def change(settings):
     settings = normalized(settings)
-    before = core.read_state_file(INPUT)
+    target = config_target(INPUT)
+    before = core.read_state_file(target)
     if before is None:
         raise ValueError('Missing Hyprland input.lua')
     status = inspect(before)
@@ -421,11 +519,12 @@ def change(settings):
     after = base + separator + block(settings, original, separator, version=7)
     # Validate the complete result before writing; appending to dynamic Lua is unsafe.
     parse(after)
-    transact(before, after, expected=settings)
+    transact(before, after, target, expected=settings)
 
 
 def restore():
-    before = core.read_state_file(INPUT)
+    target = config_target(INPUT)
+    before = core.read_state_file(target)
     managed = parse(before or '')
     if not managed:
         raise ValueError('No managed gestures to restore')
@@ -433,7 +532,7 @@ def restore():
     after = before[:start] + before[end:]
     if original:
         after = after.replace(ANCHOR, original, 1)
-    transact(before, after)
+    transact(before, after, target)
 
 
 def main():
@@ -452,7 +551,7 @@ def main():
         recover()
         if args[0] == 'set': change(json.loads(args[1]))
         elif args[0] == 'restore': restore()
-        source = core.read_state_file(INPUT)
+        source = core.read_state_file(config_target(INPUT))
         if source is None:
             raise ValueError('Missing Hyprland input.lua')
         print(json.dumps(inspect(source)))
