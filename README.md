@@ -98,15 +98,18 @@ companion does not enable gestures. A successful process start or IPC connection
 alone is not proof that previews work on your system.
 
 Swipe up with your selected three or four fingers to open; swipe down, press
-Escape, or click **Close** to dismiss. Click a window to focus it, or a workspace
+or Escape to dismiss. Click a window to focus it, or a workspace
 thumbnail in the top strip to switch there, including an existing empty workspace.
-The overview stays open while you browse: the larger previews below follow the
-current workspace. Tab or arrow keys move through controls; Enter selects.
+Both selections close the overview immediately. The **+** tile creates and
+enters an unused numbered workspace. Tab or arrow keys move through controls;
+Enter selects.
 Horizontal swipes retain native workspace switching and update the open overview.
 
-The top strip shows ordinary workspaces on the monitor where you opened it. Each
-thumbnail shows a representative window and the workspace's window count. The
-strip scrolls horizontally when needed; it has no workspace pages. The main area
+The overview uses your current Omarchy wallpaper. A translucent workspace strip
+slides down from the top, with miniature desktops showing up to three windows
+in their desktop positions; a count marks additional windows. The strip shows
+ordinary workspaces on the monitor where you opened it and scrolls horizontally
+when needed. Larger previews below preserve window proportions. The main area
 shows up to six windows at once, with page controls for additional windows. Other
 monitors, special workspaces, and hidden group members are excluded. Previews are static
 snapshots captured on opening or paging, not live video, and the transition does
@@ -116,13 +119,18 @@ The companion runs outside both Hyprland and the bar, starts on demand, and can
 stay idle after dismissal. Hidden and locked views release their capture sources;
 an unknown lock state prevents opening. Unlocking does not reopen it. Preview
 images and window titles are not written to files, logs, or network services.
-Capture is limited to the visible page with two simultaneous requests and a
+Capture is limited to visible thumbnails and the current window page, with two simultaneous requests and a
 per-card deadline. Large source windows can still require large graphics buffers.
 
-Gesture block schemas 2 and 3 remain readable and restorable. An explicit edit
-writes schema 4 with the selected provider; this is separate from the pointer
-settings schema. **Restore original** restores the saved input bindings without
+Gesture block schemas 2, 3, and 4 remain readable and restorable. An explicit edit
+writes schema 5 with the selected provider; this is separate from the pointer
+settings schema. With Trackpad Plus selected, Hyprland 0.56.2 gesture callbacks
+start the hidden companion while an upward swipe is in progress, then open it
+only when the gesture finishes without cancellation. Cancelled swipes never open
+or close the overview. **Restore original** restores the saved input bindings without
 changing your trackpad values or uninstalling either provider.
+To enable prewarming on an existing installation, press **Apply gestures** once
+after upgrading; you can keep the same gesture values.
 
 ### Optional HyMission provider
 

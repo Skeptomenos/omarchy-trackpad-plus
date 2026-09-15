@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='trackpad-plus-lint-') as directory:
                 'but is required to compile onExited. Did you add all imports and dependencies?')
             relative = Path(source['filename']).relative_to(repo).as_posix()
             allowed = (relative == 'Panel.qml' and (host_property or host_signal)) or (
-                relative == 'overview/Session.qml' and host_signal)
+                relative in ('overview/Session.qml', 'overview/shell.qml') and host_signal)
             if warning['type'] == 'warning' and allowed:
                 known += 1
             else:

@@ -144,7 +144,7 @@ class GestureTests(unittest.TestCase):
         with patch('platform.machine', return_value='aarch64'):
             g.change(settings)
         source = g.INPUT.read_text()
-        self.assertIn('"version": 4', source)
+        self.assertIn('"version": 5', source)
         self.assertEqual(g.parse(source)[2], settings)
         self.assertNotIn('hl.plugin.hymission', source)
         lua = ('local native, commands = {}, {}\n'
@@ -152,12 +152,48 @@ class GestureTests(unittest.TestCase):
                'exec_cmd=function(c) table.insert(commands,c) end}\n' + source +
                '\nassert(#native == 3 and native[1].direction == "horizontal" and native[1].action == "workspace")'
                '\nassert(native[2].direction == "up" and native[3].direction == "down")'
-               '\nassert(#commands == 0)\nnative[2].action()\nnative[3].action()'
-               '\nassert(#commands == 2 and commands[1] == ' + json.dumps(g.COMPANION_COMMAND + 'open') + ')'
-               '\nassert(commands[2] == ' + json.dumps(g.COMPANION_COMMAND + 'close') + ')')
+               '\nassert(#commands == 0 and type(native[2].action) == "table")'
+               '\nnative[2].action.start({})'
+               '\nassert(#commands == 1 and commands[1] == ' + json.dumps(g.COMPANION_COMMAND + 'start') + ')'
+               '\nnative[2].action.finish({cancelled=true})\nnative[3].action.finish({cancelled=true})'
+               '\nassert(#commands == 1, "cancelled gesture must not open or close")'
+               '\nnative[2].action.start({})\nnative[2].action.finish({cancelled=false})'
+               '\nassert(#commands == 3 and commands[2] == ' + json.dumps(g.COMPANION_COMMAND + 'start') + ')'
+               '\nassert(commands[3] == ' + json.dumps(g.COMPANION_COMMAND + 'open') + ')'
+               '\nassert(native[3].action.start == nil)\nnative[3].action.finish({cancelled=false})'
+               '\nassert(#commands == 4 and commands[4] == ' + json.dumps(g.COMPANION_COMMAND + 'close') + ')')
         subprocess.run(['lua', '-'], input=lua, text=True, capture_output=True, check=True)
         g.restore()
         self.assertEqual(g.INPUT.read_text(), INPUT)
+
+    def test_schema_four_literal_read_migrate_and_restore(self):
+        fixture = r'''-- BEGIN Trackpad Plus gestures
+-- {"original": "hl.gesture({ fingers = 3, direction = \"horizontal\", action = \"workspace\" })\n", "separator": "", "settings": {"distance": 300, "enabled": true, "fingers": 3, "invert": false, "overview": true, "overview_provider": "trackpad-plus"}, "version": 4}
+hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+hl.gesture({ fingers = 3, direction = "up", action = function() hl.exec_cmd("python3 -B \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus/overview-control.py\" open") end })
+hl.gesture({ fingers = 3, direction = "down", action = function() hl.exec_cmd("python3 -B \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus/overview-control.py\" close") end })
+hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert = false } })
+-- END Trackpad Plus gestures
+'''
+        historical = INPUT.replace(BINDING + '\n', g.ANCHOR) + fixture
+        for mode in ('restore', 'migrate', 'failed-migration'):
+            g.INPUT.write_text(historical)
+            parsed = g.parse(historical)
+            self.assertEqual(g.block(parsed[2], parsed[3], version=4), fixture)
+            self.assertTrue(g.inspect(historical)['can_restore'])
+            self.assertEqual(g.INPUT.read_text(), historical)
+            if mode == 'migrate':
+                g.change(parsed[2])
+                self.assertIn('"version": 5', g.INPUT.read_text())
+                self.assertEqual(g.parse(g.INPUT.read_text())[3], BINDING + '\n')
+            elif mode == 'failed-migration':
+                with patch.object(g, 'reload_checked', side_effect=[RuntimeError('unsupported callback API'), None]):
+                    with self.assertRaisesRegex(RuntimeError, 'unsupported callback API'):
+                        g.change(parsed[2])
+                self.assertEqual(g.INPUT.read_text(), historical)
+                self.assertFalse(g.JOURNAL.exists())
+            g.restore()
+            self.assertEqual(g.INPUT.read_text(), INPUT)
 
     def test_companion_callbacks_preserve_spaces_without_shell_injection(self):
         source = g.COMPANION_COMMAND + 'open'
@@ -198,11 +234,13 @@ class GestureTests(unittest.TestCase):
         g.restore()
         self.assertEqual(g.INPUT.read_text(), INPUT)
 
-    def test_schema_four_rejects_modified_callback_or_provider(self):
+    def test_schema_five_rejects_modified_callback_or_provider(self):
         g.change(dict(self.settings, overview=True, overview_provider='trackpad-plus'))
         source = g.INPUT.read_text()
         for modified in [source.replace('hl.exec_cmd', 'os.execute'),
                          source.replace('overview-control.py', 'other.py'),
+                         source.replace('if not event.cancelled then', 'if true then'),
+                         source.replace('finish = function', 'end = function'),
                          source.replace('"trackpad-plus"', '"unknown"'),
                          'if false then\n' + source + 'end\n']:
             g.INPUT.write_text(modified)

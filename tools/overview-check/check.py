@@ -134,6 +134,28 @@ INSTRUMENT = r'''
             const overview = root.testOverview();
             return overview && overview.activeWorkspace ? overview.activeWorkspace.id : 0;
         }
+        function addWorkspace(): bool {
+            let button = null;
+            function walk(item) {
+                if (!item || button) return;
+                if (item.objectName === "newWorkspace") { button = item; return; }
+                for (let child of item.children || []) walk(child);
+            }
+            walk(root.testOverview());
+            if (!button) return false;
+            button.clicked();
+            return true;
+        }
+        function backdropReady(): bool {
+            let ready = false;
+            function walk(item) {
+                if (!item) return;
+                if (item.objectName === "desktopWallpaper") ready = item.status === Image.Ready;
+                for (let child of item.children || []) walk(child);
+            }
+            walk(root.testOverview());
+            return ready;
+        }
     }
 }
 '''
@@ -201,8 +223,9 @@ def main():
             wait_for(lambda: companion.execute('status')['rendered'])
             cold = round((time.monotonic() - begin) * 1000)
             ipc = lambda method, *values: command('qs', 'ipc', '--pid', str(pid), 'call', 'overviewCheck', method, *map(str, values))
+            wait_for(lambda: ipc('backdropReady') == 'true')
             wait_for(lambda: ipc('fixture', first['address']) == 'ready')
-            assert ipc('pixelsOk', first['address'], 'false') == 'true', 'Preview has no contrasting application pixels'
+            wait_for(lambda: ipc('pixelsOk', first['address'], 'false') == 'true')
             assert hypr('activeworkspace')['id'] == original['id'], 'Capturing changed the active workspace'
             wait_for(lambda: ipc('pixelsOk', first['address'], 'true') == 'true')
             focused_before = hypr('activewindow').get('address')
@@ -225,7 +248,9 @@ def main():
             time.sleep(.4)
             companion.execute('open')
             wait_for(lambda: ipc('fixture', first['address']) == 'ready')
-            assert ipc('pixelsOk', first['address'], 'false') == 'true', 'Fullscreen preview is blank'
+            # Capture completion can precede the QML frame that paints it.
+            # Require actual fixture pixels within the same bounded deadline.
+            wait_for(lambda: ipc('pixelsOk', first['address'], 'false') == 'true')
             companion.execute('close')
             evaluate('hl.dispatch(hl.dsp.window.fullscreen({window="address:%s",mode="fullscreen"}))' % first['address'])
             companion.execute('close')
@@ -234,10 +259,11 @@ def main():
             companion.execute('open')
             wait_for(lambda: companion.execute('status')['rendered'])
             assert ipc('selectWorkspace', other['id']) == 'true'
-            wait_for(lambda: ipc('currentWorkspace') == str(other['id']))
-            assert companion.execute('status')['opened'], 'Strip selection closed overview'
+            wait_for(lambda: hypr('activeworkspace')['id'] == other['id'])
+            assert not companion.execute('status')['opened'], 'Workspace click did not dismiss overview'
+            companion.execute('open')
             wait_for(lambda: ipc('fixture', second['address']) == 'ready')
-            assert ipc('pixelsOk', second['address'], 'false') == 'true', 'Switched workspace preview is blank'
+            wait_for(lambda: ipc('pixelsOk', second['address'], 'false') == 'true')
             assert ipc('selectFixture', second['address']) == 'true'
             wait_for(lambda: hypr('activewindow').get('address') == second['address'])
             assert hypr('activeworkspace')['id'] == other['id']
@@ -252,7 +278,15 @@ def main():
             assert companion.execute('status')['opened'], 'External workspace switch closed overview'
             assert hypr('activeworkspace')['id'] == other['id']
             evaluate('hl.dispatch(hl.dsp.focus({workspace="%d"}))' % original['id'])
+            wait_for(lambda: ipc('currentWorkspace') == str(original['id']))
+            existing_ids = {w['id'] for w in hypr('workspaces')}
+            assert ipc('addWorkspace') == 'true', 'Add-workspace tile is unavailable'
+            created = wait_for(lambda: (w if (w := hypr('activeworkspace'))['id'] not in existing_ids else None))
+            assert not companion.execute('status')['opened'], 'New workspace click did not dismiss overview'
+            assert created['monitor'] == original['monitor']
+            evaluate('hl.dispatch(hl.dsp.focus({workspace="%d"}))' % original['id'])
             companion.execute('close')
+            print('PASS: wallpaper loaded; workspace and + tiles enter the desktop in one click')
             print('PASS: current/inactive workspace pixels, exact window selection, workspace selection, close/focus, external workspace change')
             before = usage(pid)
             peak = dict(before)

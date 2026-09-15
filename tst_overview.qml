@@ -147,6 +147,54 @@ TestCase {
         compare(spy.count, 1);
         compare(view.activeWorkspace.id, 15);
     }
+    function test_desktop_composition_and_window_aspect() {
+        const windows = [
+            {key: "left", title: "Left", geometry: {x: 0.05, y: 0.1, width: 0.4, height: 0.8}},
+            {key: "right", title: "Right", geometry: {x: 0.55, y: 0.1, width: 0.4, height: 0.8}},
+            {key: "hidden", title: "Omitted"},
+            {key: "focused", title: "Focused", active: true, geometry: {x: 0.25, y: 0.25, width: 0.5, height: 0.5}}
+        ];
+        view.snapshot = {workspaces: [{key: "composed", id: 1, name: "1", active: true, windows: windows}]};
+        tryCompare(findChild(view, "workspacePanel"), "y", 0);
+        tryVerify(() => view.cards.filter(c => c && c.compact && c.captureState !== "retired").length === 3);
+        const miniatures = view.cards.filter(c => c && c.compact && c.captureState !== "retired");
+        compare(miniatures.map(c => c.entry.key).join(","), "left,right,focused");
+        const left = miniatures[0];
+        compare(left.x, left.parent.width * 0.05);
+        compare(left.y, left.parent.height * 0.1);
+        compare(left.width, left.parent.width * 0.4);
+        compare(left.height, left.parent.height * 0.8);
+        const main = view.cards.find(c => c && c.entry && !c.compact && c.entry.key === "left");
+        verify(main);
+        fuzzyCompare(main.width / main.height, 0.4 * view.width / (0.8 * view.height), 0.001);
+        verify(main.desktopStyle);
+        const wallpaper = findChild(view, "desktopWallpaper");
+        verify(wallpaper);
+        compare(wallpaper.width, view.width);
+        compare(wallpaper.height, view.height);
+        const spy = createTemporaryObject(spyComponent, test, {target: view, signalName: "createWorkspace"});
+        const plus = findChild(view, "newWorkspace");
+        mouseClick(plus);
+        compare(spy.count, 1);
+        plus.forceActiveFocus();
+        keyClick(Qt.Key_Return);
+        compare(spy.count, 2);
+    }
+    function test_three_window_thumbnail_capture_bound() {
+        const groups = [];
+        for (let i = 0; i < 20; i++) groups.push({key: "bounded" + i, id: i + 1, name: String(i + 1), active: i === 0,
+            windows: [0, 1, 2, 3].map(j => ({key: "bounded" + i + "-" + j, title: "Window", active: j === 3}))});
+        view.snapshot = {workspaces: groups};
+        const strip = findChild(view, "workspaceStrip");
+        tryVerify(() => view.cards.some(c => c && c.compact && c.entry.key === "bounded0-0"));
+        verify(view.cards.filter(c => c && c.compact && c.captureState !== "retired").length <= 21);
+        strip.positionViewAtEnd();
+        tryVerify(() => !view.cards.some(c => c && c.compact && c.captureState !== "retired" && c.entry.key === "bounded0-0"));
+        verify(view.cards.filter(c => c && c.compact && c.captureState !== "retired").length <= 21);
+        strip.positionViewAtBeginning();
+        tryVerify(() => view.cards.some(c => c && c.compact && c.entry.key === "bounded0-0"));
+        tryVerify(() => view.cards.filter(c => c && c.captureState !== "retired").length <= 27);
+    }
     function test_visible_thumbnails_are_created() {
         tryVerify(() => view.cards.some(c => c && c.compact));
     }
@@ -181,6 +229,14 @@ TestCase {
         compare(view.inFlight, 1);
         third.captureState = "ready";
         tryCompare(view, "inFlight", 0);
+    }
+    function test_new_captures_start_next_turn_with_two_slot_limit() {
+        const cards = [0, 1, 2].map(() => createTemporaryObject(pendingCard, test));
+        for (const card of cards) view.enqueue(card);
+        let states = null;
+        Qt.callLater(() => { states = cards.map(card => card.captureState).join(","); });
+        tryVerify(() => states !== null);
+        compare(states, "capturing,capturing,waiting");
     }
     Component { id: spyComponent; SignalSpy {} }
 }

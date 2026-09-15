@@ -6,6 +6,7 @@ Button {
     id: card
     required property var entry
     property bool compact: false
+    property bool desktopStyle: false
     property var source: null
     property bool captureEnabled: true
     property color foreground: "#ded4b8"
@@ -15,7 +16,7 @@ Button {
     signal queued(var card)
     Accessible.name: entry.title || entry.appId || "Window"
     hoverEnabled: true
-    padding: compact ? 2 : 8
+    padding: desktopStyle ? 0 : (compact ? 2 : 8)
 
     function beginCapture() {
         if (captureState !== "waiting") return;
@@ -32,14 +33,14 @@ Button {
     onSourceChanged: { if (!source && captureState !== "waiting") finish("unavailable"); }
     Timer { id: deadline; interval: 2000; onTriggered: card.finish("unavailable") }
     background: Rectangle {
-        color: card.backgroundColor
-        radius: 8
-        border.width: card.hovered || card.activeFocus || card.entry.active ? 2 : 1
+        color: card.desktopStyle && card.captureState === "ready" ? "transparent" : card.backgroundColor
+        radius: card.desktopStyle ? 0 : 8
+        border.width: card.hovered || card.activeFocus || card.entry.active ? 2 : (card.desktopStyle ? 0 : 1)
         border.color: card.hovered || card.activeFocus || card.entry.active ? card.accent : Qt.alpha(card.foreground, 0.25)
     }
     contentItem: Item {
         Item {
-            anchors { top: parent.top; left: parent.left; right: parent.right; bottom: title.top; bottomMargin: card.compact ? 0 : 8 }
+            anchors { top: parent.top; left: parent.left; right: parent.right; bottom: title.top; bottomMargin: card.compact || card.desktopStyle ? 0 : 8 }
             Loader {
                 id: previewLoader
                 anchors.fill: parent
@@ -67,10 +68,17 @@ Button {
                 font.pixelSize: card.compact ? 11 : 14
             }
         }
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            visible: card.desktopStyle && !card.compact
+            border.width: card.hovered || card.activeFocus || card.entry.active ? 2 : 1
+            border.color: card.hovered || card.activeFocus || card.entry.active ? card.accent : Qt.alpha(card.foreground, 0.25)
+        }
         Text {
             id: title
-            visible: !card.compact
-            height: card.compact ? 0 : implicitHeight
+            visible: !card.compact && !card.desktopStyle
+            height: card.compact || card.desktopStyle ? 0 : implicitHeight
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
             text: card.entry.title || card.entry.appId || "Window"
             textFormat: Text.PlainText

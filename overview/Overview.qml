@@ -8,6 +8,7 @@ FocusScope {
     property var snapshot: ({workspaces: []})
     property var sourceFor: function(entry) { return null; }
     property bool captureEnabled: true
+    property url wallpaperSource: ""
     property color foreground: "#ded4b8"
     property color backgroundColor: "#293238"
     property color accent: "#80b9b2"
@@ -15,6 +16,7 @@ FocusScope {
     readonly property string activeKey: activeWorkspace ? activeWorkspace.key : ""
     readonly property int windowCount: activeWorkspace ? activeWorkspace.windows.length : 0
     readonly property int windowsPerPage: 6
+    readonly property int windowsPerThumbnail: 3
     property int windowPage: 0
     readonly property int windowPageCount: Math.max(1, Math.ceil(windowCount / windowsPerPage))
     readonly property int columns: width < 900 ? 2 : 3
@@ -26,6 +28,7 @@ FocusScope {
     property int inFlight: 0
     property var cards: []
     property int readyCount: 0
+    signal createWorkspace()
     signal dismiss()
     signal selected(string kind, string key)
     focus: true
@@ -54,7 +57,9 @@ FocusScope {
         }
     }
     function activeFocusItem() { return Window.window ? Window.window.activeFocusItem : null; }
-    function enqueue(card) { cards = cards.concat([card]); pump.start(); }
+    // Coalesce newly built delegates into the next event turn, without waiting
+    // for the periodic capture-completion poll to start the first previews.
+    function enqueue(card) { cards = cards.concat([card]); Qt.callLater(view.startQueued); }
     function startQueued() {
         const live = cards.filter(card => card && card.captureState !== undefined && card.captureState !== "retired");
         let active = live.filter(card => card.captureState === "capturing").length;
@@ -80,29 +85,76 @@ FocusScope {
         }
     }
     Component.onCompleted: revealWorkspace.start()
+    function thumbnailWindows(workspace) {
+        // Keep the focused window in the limited miniature and paint it last.
+        const active = workspace.windows.find(w => w.active);
+        const others = workspace.windows.filter(w => w !== active);
+        return active ? others.slice(0, windowsPerThumbnail - 1).concat([active]) : others.slice(0, windowsPerThumbnail);
+    }
+    function windowAspect(entry) {
+        const g = entry.geometry;
+        return g && g.width > 0 && g.height > 0 ? g.width * view.width / (g.height * view.height) : 1.6;
+    }
     Rectangle { anchors.fill: parent; color: view.backgroundColor }
-    ColumnLayout {
+    component WallpaperImage: Image {
+        source: view.wallpaperSource
+        sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+        cache: false
+    }
+    WallpaperImage {
+        objectName: "desktopWallpaper"
         anchors.fill: parent
-        anchors.margins: 24
-        spacing: 18
+    }
+    Rectangle { anchors.fill: parent; color: "#16000000" }
+    Item {
+        id: topPanel
+        objectName: "workspacePanel"
+        width: parent.width
+        height: Math.max(110, Math.min(240, view.height * 0.18))
+        y: -height
+        Component.onCompleted: entrance.start()
+        NumberAnimation { id: entrance; target: topPanel; property: "y"; to: 0; duration: 260; easing.type: Easing.OutCubic }
+        Rectangle { anchors.fill: parent; color: "#66303946" }
         ListView {
             id: strip
             objectName: "workspaceStrip"
-            Layout.fillWidth: true
-            Layout.maximumWidth: 1320
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredHeight: Math.min(160, view.height * 0.23)
+            anchors.centerIn: parent
+            width: Math.min(1320, parent.width - 48, (count + 1) * (cardWidth + 12))
+            height: parent.height - 24
             orientation: ListView.Horizontal
             spacing: 12
             clip: true
-            // Keep lightweight buttons in the focus chain even beyond the viewport.
-            // Their preview Loaders still unload captures as they scroll offscreen.
-            cacheBuffer: Math.max(0, contentWidth)
+            // Lightweight buttons remain in the focus chain. Only intersecting
+            // desktop Loaders retain captures (at most 7 tiles × 3 windows).
+            cacheBuffer: (count + 1) * (cardWidth + spacing)
             boundsBehavior: Flickable.StopAtBounds
             model: view.snapshot.workspaces
-            readonly property real cardWidth: Math.max(136, Math.min(208,
-                (width - 12 * (Math.min(count, 6) - 1)) / Math.max(1, Math.min(count, 6))))
-            ScrollBar.horizontal: ScrollBar { policy: strip.contentWidth > strip.width ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff }
+            readonly property real cardWidth: Math.max(136,
+                (Math.min(1320, topPanel.width - 48) - 60) / 6,
+                Math.min(320, height * view.width / Math.max(1, view.height)))
+            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+            footer: Button {
+                id: newWorkspace
+                objectName: "newWorkspace"
+                width: strip.cardWidth + 12
+                height: strip.height
+                leftPadding: 12
+                Accessible.name: "Create workspace"
+                hoverEnabled: true
+                onActiveFocusChanged: { if (activeFocus) strip.positionViewAtEnd(); }
+                onClicked: view.createWorkspace()
+                background: Rectangle {
+                    x: 12
+                    width: parent.width - 12
+                    height: parent.height
+                    color: newWorkspace.hovered || newWorkspace.activeFocus ? "#665c6471" : "#44303946"
+                    border.width: newWorkspace.activeFocus ? 2 : 0
+                    border.color: view.accent
+                }
+                contentItem: Text { text: "+"; color: view.foreground; font.pixelSize: 64; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+            }
             delegate: Button {
                 id: workspace
                 required property var modelData
@@ -110,116 +162,118 @@ FocusScope {
                 onActiveFocusChanged: { if (activeFocus) strip.positionViewAtIndex(index, ListView.Contain); }
                 objectName: "workspace-" + modelData.key
                 width: strip.cardWidth
-                height: strip.height - 12
-                padding: 8
+                height: strip.height
+                padding: 0
                 hoverEnabled: true
                 Accessible.name: "Workspace " + modelData.name + (modelData.active ? ", current" : "")
                 onClicked: view.selected("workspace", modelData.key)
-                background: Rectangle {
-                    radius: 8
-                    color: workspace.modelData.active ? Qt.lighter(view.backgroundColor, 1.3) : Qt.lighter(view.backgroundColor, 1.08)
-                    border.width: workspace.modelData.active || workspace.hovered || workspace.activeFocus ? 2 : 1
-                    border.color: workspace.modelData.active || workspace.hovered || workspace.activeFocus ? view.accent : Qt.alpha(view.foreground, 0.2)
-                }
-                contentItem: ColumnLayout {
-                    spacing: 6
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        // A representative window summarizes each workspace. Only
-                        // on-screen thumbnails retain captures, including while scrolling.
-                        Loader {
-                            anchors.fill: parent
-                            active: workspace.modelData.windows.length > 0 && workspace.x + workspace.width > strip.contentX
-                                && workspace.x < strip.contentX + strip.width
-                            sourceComponent: WindowCard {
-                                entry: workspace.modelData.windows.find(w => w.active) || workspace.modelData.windows[0]
-                                source: view.sourceFor(entry)
-                                captureEnabled: view.captureEnabled
-                                compact: true
-                                enabled: false
-                                foreground: view.foreground
-                                backgroundColor: view.backgroundColor
-                                accent: view.accent
-                                onQueued: card => view.enqueue(card)
+                background: Rectangle { color: view.backgroundColor }
+                contentItem: Item {
+                    clip: true
+                    Loader {
+                        anchors.fill: parent
+                        active: workspace.x + workspace.width > strip.contentX
+                            && workspace.x < strip.contentX + strip.width
+                        sourceComponent: Item {
+                            id: miniature
+                            WallpaperImage { anchors.fill: parent }
+                            Repeater {
+                                model: view.thumbnailWindows(workspace.modelData)
+                                delegate: WindowCard {
+                                    required property var modelData
+                                    required property int index
+                                    readonly property var geometry: modelData.geometry
+                                    entry: modelData
+                                    x: geometry ? geometry.x * miniature.width : miniature.width * (0.08 + index * 0.06)
+                                    y: geometry ? geometry.y * miniature.height : miniature.height * (0.1 + index * 0.07)
+                                    width: geometry ? geometry.width * miniature.width : miniature.width * 0.76
+                                    height: geometry ? geometry.height * miniature.height : miniature.height * 0.76
+                                    source: view.sourceFor(entry)
+                                    captureEnabled: view.captureEnabled
+                                    compact: true
+                                    desktopStyle: true
+                                    enabled: false
+                                    foreground: view.foreground
+                                    backgroundColor: view.backgroundColor
+                                    accent: view.accent
+                                    onQueued: card => view.enqueue(card)
+                                }
                             }
                         }
-                        Text {
-                            anchors.centerIn: parent
-                            visible: workspace.modelData.windows.length === 0
-                            text: "Empty"
-                            color: Qt.alpha(view.foreground, 0.5)
-                            font.pixelSize: 13
-                        }
+                    }
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "transparent"
+                        border.width: workspace.modelData.active || workspace.hovered || workspace.activeFocus ? 2 : 0
+                        border.color: view.accent
                     }
                     Text {
-                        Layout.fillWidth: true
-                        text: "Workspace " + workspace.modelData.name + "  ·  " + workspace.modelData.windows.length
+                        anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 5 }
+                        text: "Workspace " + workspace.modelData.name + (workspace.modelData.windows.length > view.windowsPerThumbnail ? "  +" + (workspace.modelData.windows.length - view.windowsPerThumbnail) : "")
                         textFormat: Text.PlainText
-                        elide: Text.ElideRight
-                        horizontalAlignment: Text.AlignHCenter
                         color: view.foreground
-                        font.pixelSize: 13
+                        style: Text.Outline
+                        styleColor: "#a0000000"
+                        font.pixelSize: 12
                     }
                 }
             }
         }
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Qt.alpha(view.foreground, 0.16) }
-        RowLayout {
-            Layout.fillWidth: true
-            Text {
-                Layout.fillWidth: true
-                text: view.activeWorkspace ? "Workspace " + view.activeWorkspace.name : "No ordinary workspace selected"
-                textFormat: Text.PlainText
-                color: view.foreground
-                font.pixelSize: 22
-                elide: Text.ElideRight
-            }
-            Button { text: "Close"; Accessible.name: "Close overview"; onClicked: view.dismiss() }
-        }
-        GridLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            columns: view.columns
-            rowSpacing: 18
-            columnSpacing: 18
-            Repeater {
-                model: view.activeWorkspace ? view.activeWorkspace.windows.slice(view.windowPage * view.windowsPerPage, (view.windowPage + 1) * view.windowsPerPage) : []
-                delegate: WindowCard {
-                    required property var modelData
-                    entry: modelData
+    }
+    Item {
+        id: windowArea
+        anchors { top: topPanel.bottom; bottom: pager.top; left: parent.left; right: parent.right; margins: 28 }
+        readonly property var windows: view.activeWorkspace ? view.activeWorkspace.windows.slice(view.windowPage * view.windowsPerPage, (view.windowPage + 1) * view.windowsPerPage) : []
+        readonly property int columnCount: Math.max(1, Math.min(view.columns, windows.length))
+        readonly property int rowCount: Math.max(1, Math.ceil(windows.length / columnCount))
+        readonly property real cellWidth: width / columnCount
+        readonly property real cellHeight: height / rowCount
+        Repeater {
+            model: windowArea.windows
+            delegate: Item {
+                id: slot
+                required property var modelData
+                required property int index
+                readonly property int row: Math.floor(index / windowArea.columnCount)
+                readonly property int rowItems: Math.min(windowArea.columnCount, windowArea.windows.length - row * windowArea.columnCount)
+                x: (windowArea.width - rowItems * windowArea.cellWidth) / 2 + (index % windowArea.columnCount) * windowArea.cellWidth
+                y: row * windowArea.cellHeight
+                width: windowArea.cellWidth
+                height: windowArea.cellHeight
+                WindowCard {
+                    entry: slot.modelData
+                    anchors.centerIn: parent
+                    readonly property real aspect: view.windowAspect(entry)
+                    width: Math.min(parent.width * 0.94, parent.height * 0.9 * aspect)
+                    height: width / aspect
                     source: view.sourceFor(entry)
                     captureEnabled: view.captureEnabled
+                    desktopStyle: true
                     foreground: view.foreground
                     backgroundColor: view.backgroundColor
                     accent: view.accent
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumWidth: 0
-                    Layout.minimumHeight: 0
                     onQueued: card => view.enqueue(card)
                     onClicked: view.selected("window", entry.key)
                 }
             }
-            Item {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                visible: view.windowCount === 0
-                Text {
-                    objectName: "emptyWorkspace"
-                    anchors.centerIn: parent
-                    text: view.activeWorkspace ? "This workspace is empty" : "Select a workspace above"
-                    visible: parent.visible
-                    color: Qt.alpha(view.foreground, 0.65)
-                }
-            }
         }
-        RowLayout {
-            Layout.fillWidth: true
-            Text { Layout.fillWidth: true; text: "Choose a workspace above · Select a window to enter · Esc to close"; color: Qt.alpha(view.foreground, 0.65); font.pixelSize: 12; wrapMode: Text.WordWrap }
-            Button { objectName: "previousWindows"; text: "‹"; Accessible.name: "Previous windows"; visible: view.windowPageCount > 1; enabled: view.windowPage > 0; onClicked: view.windowPage-- }
-            Text { text: (view.windowPage + 1) + " / " + view.windowPageCount; visible: view.windowPageCount > 1; color: view.foreground }
-            Button { objectName: "nextWindows"; text: "›"; Accessible.name: "Next windows"; visible: view.windowPageCount > 1; enabled: view.windowPage + 1 < view.windowPageCount; onClicked: view.windowPage++ }
+        Text {
+            objectName: "emptyWorkspace"
+            anchors.centerIn: parent
+            text: view.activeWorkspace ? "This workspace is empty" : "Select a workspace above"
+            visible: view.windowCount === 0
+            color: view.foreground
+            style: Text.Outline
+            styleColor: "#a0000000"
         }
+    }
+    RowLayout {
+        id: pager
+        anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 12 }
+        height: view.windowPageCount > 1 ? implicitHeight : 0
+        visible: view.windowPageCount > 1
+        Button { objectName: "previousWindows"; text: "‹"; Accessible.name: "Previous windows"; enabled: view.windowPage > 0; onClicked: view.windowPage-- }
+        Text { text: (view.windowPage + 1) + " / " + view.windowPageCount; color: view.foreground }
+        Button { objectName: "nextWindows"; text: "›"; Accessible.name: "Next windows"; enabled: view.windowPage + 1 < view.windowPageCount; onClicked: view.windowPage++ }
     }
 }

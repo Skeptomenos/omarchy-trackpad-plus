@@ -1,15 +1,20 @@
 // Pure navigation data: no capture, dispatch, logging, or compositor access.
 //
 // buildSnapshot accepts {session, monitorId, monitors, workspaces, windows,
-// activeAddress, activeWorkspaceId}. Monitors have numeric id and string name;
+// activeAddress, activeWorkspaceId}. Monitors have numeric id and string name,
+// plus optional logical desktop coordinates {x,y,width,height};
 // workspaces use Hyprland's {id,name,monitorID} (or monitor name), plus optional
 // special. Windows use {address,pid,workspace:{id},monitor,hidden,mapped,title,
-// class,token}. The adapter MUST assign token once per live toplevel lifetime,
+// class,token,at:[x,y],size:[width,height]}. The adapter MUST assign token once per live toplevel lifetime,
 // never recycle it within a compositor session, and verify the same live source
 // object before activation. PID/address alone cannot distinguish address reuse.
 //
 // Output: {session,monitorId,workspaces:[{key,id,name,active,windows:[{key,
-// address,pid,token,workspaceId,title,appId,active}]}],selection}. A selection is
+// address,pid,token,workspaceId,title,appId,active,geometry}]}],selection}.
+// geometry is {x,y,width,height} normalized to the monitor's logical extent and
+// clipped to its bounds, or null for unavailable/invalid/offscreen geometry.
+// The adapter resolves monitor scale/transform before supplying logical bounds.
+// A selection is
 // {kind:'window'|'workspace',key}, never a position. resolveSelection returns the
 // current matching entry; reconcileSelection returns the valid selection or
 // null. A disappeared selection does NOT fall back to another window. The
@@ -46,6 +51,30 @@ function workspaceOnMonitor(workspace, monitor) {
   if (integer(workspace.monitorID)) return workspace.monitorID === monitor.id
   return (typeof monitor.name === "string" && monitor.name.length > 0
     && workspace.monitor === monitor.name) || workspace.monitor === monitor.id
+}
+
+function finiteNumber(value) {
+  return typeof value === "number" && isFinite(value)
+}
+
+function desktopGeometry(window, monitor) {
+  if (!Array.isArray(window.at) || window.at.length !== 2
+      || !Array.isArray(window.size) || window.size.length !== 2
+      || ![monitor.x, monitor.y, monitor.width, monitor.height,
+        window.at[0], window.at[1], window.size[0], window.size[1]].every(finiteNumber)
+      || monitor.width <= 0 || monitor.height <= 0
+      || window.size[0] <= 0 || window.size[1] <= 0) return null
+  var x = window.at[0] - monitor.x
+  var y = window.at[1] - monitor.y
+  var right = x + window.size[0]
+  var bottom = y + window.size[1]
+  if (![x, y, right, bottom].every(finiteNumber)) return null
+  var left = Math.max(0, x) / monitor.width
+  var top = Math.max(0, y) / monitor.height
+  right = Math.min(monitor.width, right) / monitor.width
+  bottom = Math.min(monitor.height, bottom) / monitor.height
+  if (right <= left || bottom <= top) return null
+  return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
 function buildSnapshot(input) {
@@ -97,7 +126,8 @@ function buildSnapshot(input) {
         || w.monitor !== result.monitorId || w.hidden === true || w.mapped === false) return
     var entry = { key: JSON.stringify([result.session, "window", normalized, w.pid, w.token]),
       address: normalized, pid: w.pid, token: w.token, workspaceId: group.id,
-      title: text(w.title), appId: text(w.class), active: normalized === activeAddress }
+      title: text(w.title), appId: text(w.class), active: normalized === activeAddress,
+      geometry: desktopGeometry(w, monitor) }
     group.windows.push(entry)
     if (entry.active) result.selection = { kind: "window", key: entry.key }
   })

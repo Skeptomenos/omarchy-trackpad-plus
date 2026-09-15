@@ -15,13 +15,44 @@ ShellRoot {
     property int priorWorkspace: 0
     property int currentWorkspace: 0
     property var priorWindow: null
+    property string currentActiveAddress: ""
     property var activation: null
     property color foreground: "#ded4b8"
     property color backgroundColor: "#293238"
     property color accent: "#80b9b2"
+    property url wallpaperSource: ""
+
+    function monitorGeometry(monitor) {
+        const raw = monitor.lastIpcObject || {};
+        const scale = typeof raw.scale === "number" && raw.scale > 0 ? raw.scale : NaN;
+        const rotated = [1, 3, 5, 7].indexOf(raw.transform) >= 0;
+        return {id: monitor.id, name: monitor.name, x: raw.x, y: raw.y,
+            width: (rotated ? raw.height : raw.width) / scale,
+            height: (rotated ? raw.width : raw.height) / scale};
+    }
+
+    function syncActiveToplevel() {
+        let toplevel = Hyprland.activeToplevel;
+        // The exclusive layer can temporarily clear activeToplevel. Preserve
+        // the last compositor window until Hyprland reports its replacement.
+        const valid = candidate => candidate && candidate.monitor && candidate.workspace
+            && candidate.monitor.id === monitorId && candidate.workspace.id === currentWorkspace
+            && (!candidate.lastIpcObject || (candidate.lastIpcObject.hidden !== true && candidate.lastIpcObject.mapped !== false));
+        if (!valid(toplevel)) {
+            const focused = Hyprland.toplevels.values.filter(candidate => valid(candidate)
+                && candidate.lastIpcObject && candidate.lastIpcObject.focusHistoryID === 0);
+            if (focused.length !== 1) return false;
+            toplevel = focused[0];
+        }
+        const address = toplevel.address || "";
+        if (address === currentActiveAddress) return false;
+        currentActiveAddress = address;
+        return true;
+    }
 
     function rebuild() {
         if (!session.opened && !session.pending) return;
+        root.syncActiveToplevel();
         const monitors = Hyprland.monitors.values;
         if (!monitors.some(m => m.id === monitorId)) { session.dismiss("monitor-removed"); return; }
         const live = Hyprland.toplevels.values;
@@ -34,13 +65,13 @@ ShellRoot {
             return {address: w.address, pid: raw.pid, token: record.token,
                 workspace: {id: w.workspace ? w.workspace.id : 0},
                 monitor: w.monitor ? w.monitor.id : null, hidden: raw.hidden, mapped: raw.mapped,
-                title: w.title, class: raw.class};
+                title: w.title, class: raw.class, at: raw.at, size: raw.size};
         });
         const next = Model.buildSnapshot({session: session.sessionIdentity, monitorId: monitorId,
-            monitors: monitors.map(m => ({id: m.id, name: m.name})),
+            monitors: monitors.map(root.monitorGeometry),
             workspaces: Hyprland.workspaces.values.map(w => ({id: w.id, name: w.name,
                 monitorID: w.monitor ? w.monitor.id : null})), windows: windows,
-            activeAddress: priorWindow ? priorWindow.address : "",
+            activeAddress: currentActiveAddress,
             activeWorkspaceId: currentWorkspace});
         // Preserve live cards and their paging when a compositor event leaves
         // the overview model unchanged. Titles refresh on the next open.
@@ -57,7 +88,11 @@ ShellRoot {
         if (!entry) return;
         if (kind === "workspace") {
             const workspace = Hyprland.workspaces.values.find(w => w.id === entry.id && w.monitor && w.monitor.id === monitorId);
-            if (workspace) workspace.activate();
+            if (workspace) {
+                activation = null;
+                session.dismiss("selection");
+                workspace.activate();
+            }
             return;
         }
         const record = lifetimes.find(r => r.token === entry.token);
@@ -65,9 +100,40 @@ ShellRoot {
         session.dismiss("selection");
         activateDelay.restart();
     }
+    function createWorkspace() {
+        if (!session.opened || session.lockState !== "unlocked") return;
+        const monitor = Hyprland.focusedMonitor;
+        if (!monitor || monitor.id !== monitorId) return;
+        const used = new Set(Hyprland.workspaces.values.map(w => w.id));
+        let id = 1;
+        while (used.has(id) && id < 2147483647) id++;
+        if (used.has(id)) return;
+        activation = null;
+        session.dismiss("selection");
+        // Only a generated integer enters the dispatch expression.
+        Hyprland.dispatch('hl.dsp.focus({ workspace = "' + id + '" })');
+    }
+    Process {
+        id: wallpaper
+        command: ["readlink", "-e", "--", (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/current/background"]
+        onStarted: wallpaperDeadline.restart()
+        stdout: StdioCollector { id: wallpaperPath; waitForEnd: true }
+        onExited: code => {
+            wallpaperDeadline.stop();
+            const path = wallpaperPath.text.trim();
+            root.wallpaperSource = code === 0 && path.startsWith("/")
+                ? "file://" + path.split("/").map(encodeURIComponent).join("/") : "";
+        }
+    }
+    Timer {
+        id: wallpaperDeadline
+        interval: 1000
+        onTriggered: { root.wallpaperSource = ""; wallpaper.signal(9); }
+    }
     Session {
         id: session
         onWillOpen: {
+            if (!wallpaper.running) wallpaper.running = true;
             activateDelay.stop();
             root.activation = null;
             const monitor = Hyprland.focusedMonitor;
@@ -79,6 +145,8 @@ ShellRoot {
             root.priorWorkspace = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 0;
             root.currentWorkspace = root.priorWorkspace;
             root.priorWindow = Hyprland.activeToplevel;
+            root.currentActiveAddress = root.priorWindow ? root.priorWindow.address : "";
+            root.syncActiveToplevel();
             root.rebuild();
             Hyprland.refreshMonitors();
             Hyprland.refreshWorkspaces();
@@ -125,6 +193,7 @@ ShellRoot {
                 session.dismiss("workspace-changed"); return;
             }
             root.currentWorkspace = workspace.id;
+            root.syncActiveToplevel();
             root.rebuild();
         }
         function onRawEvent(event) {
@@ -168,10 +237,12 @@ ShellRoot {
                 foreground: root.foreground
                 backgroundColor: root.backgroundColor
                 accent: root.accent
+                wallpaperSource: root.wallpaperSource
                 onInFlightChanged: session.captures = inFlight
                 onReadyCountChanged: { session.ready = readyCount; if (readyCount > 0 && session.mapped) session.rendered = true; }
                 onDismiss: session.dismiss("escape")
                 onSelected: (kind, key) => root.select(kind, key)
+                onCreateWorkspace: root.createWorkspace()
                 Component.onCompleted: forceActiveFocus()
             }
             Connections {

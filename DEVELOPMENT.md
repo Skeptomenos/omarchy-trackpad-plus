@@ -36,8 +36,9 @@ This release identifier is separate from the backend's settings schema version.
   adoption of literal bindings in input.lua, marked-block persistence and
   compare-before-restore recovery. Uses the existing bounded subprocesses,
   secure file writes, and state lock; never mixes gestures into device settings.
-  Managed block schema 4 stores explicit overview provider selection. Schemas 2
-  and 3 remain readable and restorable; legacy overview maps to HyMission, and
+  Managed block schema 5 adds hidden companion prewarming through Hyprland's
+  gesture-start callback and cancellation-aware finish callbacks. Schemas 2–4
+  remain readable and restorable; legacy overview maps to HyMission, and
   only an explicit edit upgrades the block. Provider detection must not start
   capture or replace the user's selection. HyMission's architecture guard applies
   only to that provider. Native horizontal bindings remain independent.
@@ -204,6 +205,23 @@ Cold open to a rendered preview: **337 ms**. First 30 warm opens: median
 Quickshell 0.3.1 session, not a portability or performance guarantee. A release
 performance envelope has not yet been agreed; the feature remains experimental.
 
+For the desktop-strip layout, alternating temporary builds (12 warm opens each)
+measured median first-preview time of **174 ms** with the initial 30 ms capture
+timer and **162 ms** with a coalesced next-event-turn kickoff. Both retain the
+two-capture limit. These timings include controller/status IPC, can identify a
+thumbnail as the first preview, and exclude physical gesture recognition and
+completion of the 260 ms entrance animation. Gesture-start prewarming overlaps
+the cold companion startup with finger movement; it never opens a view or
+captures windows until a non-cancelled finish requests opening.
+
+A subsequent 100-cycle run of the desktop-strip layout passed current, inactive,
+and fullscreen fixture-pixel checks, one-click workspace entry, focus restoration,
+and companion/observer teardown. Cold first preview was **308 ms**; the first 30
+warm opens had a **174 ms** median and **184 ms** p95. RSS was 173,408 KiB before,
+229,216 KiB peak, and 169,136 KiB settled; file descriptors were 49, 76, and 48.
+This bounded run found no retained-capture or descriptor growth; it does not
+establish a graphics-memory bound for arbitrary source windows.
+
 The production lock check is interactive: `python3 tools/overview-check/check_lock.py`.
 Run it only when ready to unlock the desktop after five seconds. It checks
 capture teardown, rejected opens during lock and observer restart, no automatic
@@ -211,20 +229,22 @@ reopening after unlock, and audio-control responsiveness.
 
 ### Top workspace strip (2026-09-14)
 
-The strip displays a representative window per workspace. Its viewport is capped
-at 1320 logical pixels, with at most seven intersecting thumbnail cards and six
-main-area window previews retained (thirteen captures total, two pending at a
-time). Offscreen thumbnails unload their captures; lightweight workspace buttons
-remain available for keyboard navigation. Workspace selection and native
-workspace changes on the invocation monitor keep the overview open; selecting a
-window still closes and activates it. Escape restores the original focus only
+The first strip iteration displayed one representative window per workspace.
+The desktop composition now uses the current Omarchy wallpaper and up to three
+windows in each thumbnail, with a count for the rest. At most seven intersecting
+workspace tiles and six main-area window previews retain captures (27 total,
+two pending at a time). Offscreen thumbnails unload their captures; lightweight workspace buttons
+remain available for keyboard navigation. Clicking a workspace or window closes
+the overview and enters it; the + tile also closes when creating a workspace.
+Native workspace changes on the invocation monitor keep the overview open.
+Escape restores the original focus only
 when still on the original workspace. Switching focus to another monitor dismisses
 instead of pulling that monitor's workspaces into the view.
 
 The updated live harness checks actual current and inactive workspace thumbnail
-pixels without activating the inactive workspace, stays open across strip selection
-and external workspace changes, and verifies title/no-op
+pixels without activating the inactive workspace, verifies one-click workspace entry
+and stays open across external workspace changes. It also verifies title/no-op
 stability, fullscreen capture, exact window selection, and crash cleanup. A ten-cycle
-M2 run recorded cold open 372 ms, warm median 201 ms, RSS settling to 156,608 KiB,
+M2 run of the first strip iteration recorded cold open 372 ms, warm median 201 ms, RSS settling to 156,608 KiB,
 and 44 file descriptors after dismissal. These measurements remain experimental;
 physical gesture feel and the full-view interactive lock check still need acceptance.
