@@ -78,6 +78,46 @@ else:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
+    def test_stow_gesture_cli_preserves_links_across_process_restarts(self):
+        for layout in ('file', 'hypr-directory', 'config-directory'):
+            with self.subTest(layout=layout):
+                home = self.root / layout
+                target = home / '.dotfiles/hypr/.config/hypr/input.lua'
+                target.parent.mkdir(parents=True)
+                source = '-- Stowed input\nhl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })\n'
+                target.write_text(source)
+                config = home / '.config'
+                if layout == 'config-directory':
+                    link = config
+                    link.symlink_to('.dotfiles/hypr/.config', target_is_directory=True)
+                elif layout == 'hypr-directory':
+                    config.mkdir()
+                    link = config / 'hypr'
+                    link.symlink_to('../.dotfiles/hypr/.config/hypr', target_is_directory=True)
+                else:
+                    (config / 'hypr').mkdir(parents=True)
+                    link = config / 'hypr/input.lua'
+                    link.symlink_to(os.path.relpath(target, link.parent))
+                link_text = os.readlink(link)
+                (config / 'hypr/wallpapers').symlink_to(home / 'unmounted/wallpapers', target_is_directory=True)
+                env = dict(self.env, XDG_CONFIG_HOME=str(config), XDG_STATE_HOME=str(home / 'state'))
+                def gesture(*args):
+                    result = subprocess.run([sys.executable, '-B', str(self.plugin / 'gestures.py'), *args],
+                                            env=env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    return json.loads(result.stdout)
+                self.assertTrue(gesture('state')['can_edit'])
+                settings = dict(enabled=True, fingers=4, distance=500, invert=True, overview=False)
+                self.assertTrue(gesture('set', json.dumps(settings))['managed'])
+                saved = gesture('state')
+                self.assertEqual(saved['settings']['fingers'], 4)
+                self.assertEqual(saved['settings']['distance'], 500)
+                self.assertIn('BEGIN Trackpad Plus gestures', target.read_text())
+                self.assertFalse(gesture('restore')['managed'])
+                self.assertEqual(target.read_text(), source)
+                self.assertEqual(os.readlink(link), link_text)
+                self.assertFalse((home / 'state/omarchy/local-touchpads/gestures.pending.json').exists())
+
     def test_overview_runtime_is_packaged_and_inspection_never_starts_it(self):
         for name in ('manifest.json', 'trackpads.py', 'overview-control.py',
                      'overview/shell.qml', 'overview/Session.qml', 'overview/lock-watch.py',

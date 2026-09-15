@@ -43,6 +43,16 @@ This release identifier is separate from the backend's settings schema version.
   only an explicit edit upgrades the block. Provider detection must not start
   capture or replace the user's selection. HyMission's architecture guard applies
   only to that provider. Native horizontal bindings remain independent.
+  Config resolution supports Stow file/directory links with bounded link traversal
+  and directory ownership checks. Reads and atomic writes use the resolved target
+  through the existing no-follow helpers, preserving the user's links. Gesture
+  recovery journal version 2 records that target; recovery checks both its identity
+  and expected contents. Version 1 journals remain recoverable for non-linked paths.
+  Conflict scanning follows linked config directories, deduplicates directory
+  cycles, and retains each file alias's Lua/conf extension. Missing non-config
+  entries are skipped; missing Lua/conf entries and trust failures remain fatal.
+  Recovery rechecks the target after reload before clearing its journal. Private
+  state, backups, and journals retain their stricter no-symlink policy.
 - `overview-control.py`: bounded, session-specific launcher and controller with
   a private runtime lock, process ownership checks, and versioned IPC handshake.
   Status/close/stop do not start a companion. A later close cancels older queued

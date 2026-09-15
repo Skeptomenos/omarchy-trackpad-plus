@@ -110,6 +110,22 @@ recovery journal; the next gesture read attempts recovery, but refuses to
 replace a file that has since been manually changed. Existing configuration
 errors must be resolved before applying gestures.
 
+### Stow and symlinked dotfiles
+
+Gesture settings support a symlinked `input.lua`, `hypr` directory, or `.config`
+directory. For example, `~/.config/hypr/input.lua` may point to
+`~/.dotfiles/hypr/.config/hypr/input.lua`. Apply and Restore original update the
+real dotfile and preserve the symlink, so changes also appear in your dotfiles
+repository. No unstowing or copying is needed. `XDG_CONFIG_HOME` is respected.
+
+Targets must be regular files owned by your user, with no hard links or write
+access for other users; their directories must also pass ownership and permission
+checks. Broken links and symlink loops are rejected. If a link changes target
+during an edit or pending recovery, the operation stops and keeps the recovery
+journal. Restore the original link before retrying recovery. These permissions
+apply to editable config targets; private Trackpad Plus state files continue to
+reject symlinks entirely.
+
 ### Workspace overview (experimental)
 
 Choose an **Overview provider** in **Gestures**:

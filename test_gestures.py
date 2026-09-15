@@ -1,5 +1,6 @@
 """Gesture adoption, isolation, rollback and interrupted-write recovery."""
 import json
+import os
 import subprocess
 from pathlib import Path
 import tempfile
@@ -28,6 +29,229 @@ class GestureTests(unittest.TestCase):
             self.calls.append(args)
             return '' if args[0] == 'configerrors' else 'ok'
         p = patch.object(g.core, 'hypr', side_effect=hypr); p.start(); self.addCleanup(p.stop)
+
+    def stow_config(self, layout):
+        home = Path(self.temp.name) / layout
+        target = home / '.dotfiles/hypr/.config/hypr/input.lua'
+        target.parent.mkdir(parents=True)
+        target.write_text(INPUT)
+        config = home / '.config/hypr'
+        if layout == 'config-directory':
+            config.parent.symlink_to('.dotfiles/hypr/.config', target_is_directory=True)
+        elif layout == 'hypr-directory':
+            config.parent.mkdir()
+            config.symlink_to('../.dotfiles/hypr/.config/hypr', target_is_directory=True)
+        else:
+            config.mkdir(parents=True)
+            (config / 'input.lua').symlink_to(os.path.relpath(target, config))
+        return config, target
+
+    def test_stow_config_reads_applies_and_restores_without_replacing_links(self):
+        self.environment_patch.stop()
+        for layout in ('file', 'hypr-directory', 'config-directory'):
+            with self.subTest(layout=layout):
+                config, target = self.stow_config(layout)
+                link = config / 'input.lua' if layout == 'file' else (
+                    config if layout == 'hypr-directory' else config.parent)
+                before_link = os.readlink(link)
+                with patch.object(g, 'CONFIG', config), patch.object(g, 'INPUT', config / 'input.lua'):
+                    g.change(self.settings)
+                    self.assertTrue(g.inspect(target.read_text())['managed'])
+                    self.assertTrue(link.is_symlink())
+                    self.assertEqual(os.readlink(link), before_link)
+                    g.restore()
+                    self.assertEqual(target.read_text(), INPUT)
+                    self.assertEqual(os.readlink(link), before_link)
+
+    def test_stow_linked_config_conflicts_are_still_detected(self):
+        self.environment_patch.stop()
+        config, target = self.stow_config('file')
+        other = target.parent / 'bindings.lua'
+        other.write_text(BINDING + '\n')
+        (config / 'bindings.lua').symlink_to(other)
+        with patch.object(g, 'CONFIG', config), patch.object(g, 'INPUT', config / 'input.lua'):
+            with self.assertRaisesRegex(ValueError, 'another Hyprland file'):
+                g.change(self.settings)
+        self.assertEqual(target.read_text(), INPUT)
+        self.assertFalse(g.JOURNAL.exists())
+
+    def test_stow_nested_directory_conflicts_and_alias_extensions(self):
+        self.environment_patch.stop()
+        config, target = self.stow_config('file')
+        nested = target.parent / 'extra'
+        nested.mkdir()
+        (config / 'extra').symlink_to(nested, target_is_directory=True)
+        (nested / 'back').symlink_to(config, target_is_directory=True)
+        extensionless = target.parent / 'bindings'
+        extensionless.write_text(BINDING + '\n')
+        (nested / 'bindings.lua').symlink_to(extensionless)
+        with patch.object(g, 'CONFIG', config), patch.object(g, 'INPUT', config / 'input.lua'):
+            with self.assertRaisesRegex(ValueError, 'another Hyprland file'):
+                g.change(self.settings)
+            extensionless.write_text('-- no gestures\n')
+            g.change(self.settings)  # The directory cycle must terminate.
+            g.restore()
+        self.assertEqual(target.read_text(), INPUT)
+
+    def test_stow_retarget_before_apply_refuses_even_identical_content(self):
+        config, target = self.stow_config('file')
+        alternate = target.with_name('alternate.lua')
+        alternate.write_text(INPUT)
+        inspect = g.inspect
+        def retarget(source):
+            status = inspect(source)
+            g.INPUT.unlink()
+            g.INPUT.symlink_to(alternate)
+            return status
+        with patch.object(g, 'INPUT', config / 'input.lua'), patch.object(g, 'inspect', side_effect=retarget):
+            with self.assertRaisesRegex(ValueError, 'target changed'):
+                g.change(self.settings)
+        self.assertEqual(target.read_text(), INPUT)
+        self.assertEqual(alternate.read_text(), INPUT)
+        self.assertFalse(g.JOURNAL.exists())
+
+    def test_stow_retarget_during_reload_keeps_journal_and_new_target_untouched(self):
+        config, target = self.stow_config('file')
+        alternate = target.with_name('alternate.lua')
+        alternate.write_text(INPUT)
+        def retarget():
+            # Identical content must not authorize replay into a different file.
+            alternate.write_text(target.read_text())
+            g.INPUT.unlink()
+            g.INPUT.symlink_to(alternate)
+        with patch.object(g, 'INPUT', config / 'input.lua'):
+            with patch.object(g, 'reload_checked', side_effect=retarget):
+                with self.assertRaisesRegex(RuntimeError, 'recovery pending.*target changed'):
+                    g.change(self.settings)
+            after = target.read_text()
+            self.assertNotEqual(after, INPUT)
+            self.assertEqual(alternate.read_text(), after)
+            self.assertTrue(g.JOURNAL.exists())
+            g.INPUT.unlink()
+            g.INPUT.symlink_to(target)
+            g.recover()
+            self.assertEqual(target.read_text(), INPUT)
+            self.assertEqual(alternate.read_text(), after)
+            self.assertTrue(g.INPUT.is_symlink())
+            self.assertFalse(g.JOURNAL.exists())
+
+    def test_stow_unrelated_dangling_links_do_not_block_apply(self):
+        self.environment_patch.stop()
+        config, target = self.stow_config('file')
+        (config / 'wallpapers').symlink_to('unmounted/wallpapers', target_is_directory=True)
+        (config / 'old.conf.bak').symlink_to(target.parent / 'removed-theme.conf')
+        with patch.object(g, 'CONFIG', config), patch.object(g, 'INPUT', config / 'input.lua'):
+            status = g.inspect(target.read_text())
+            self.assertTrue(status['can_edit'], status['message'])
+            g.change(self.settings)
+            g.restore()
+        self.assertEqual(target.read_text(), INPUT)
+        self.assertTrue((config / 'wallpapers').is_symlink())
+        self.assertTrue((config / 'old.conf.bak').is_symlink())
+
+    def test_stow_missing_config_links_still_block_apply(self):
+        self.environment_patch.stop()
+        config, target = self.stow_config('file')
+        for suffix in ('.lua', '.conf'):
+            with self.subTest(suffix=suffix):
+                missing = config / ('bindings' + suffix)
+                missing.symlink_to(target.parent / 'removed-bindings')
+                with patch.object(g, 'CONFIG', config), patch.object(g, 'INPUT', config / 'input.lua'):
+                    self.assertFalse(g.inspect(target.read_text())['can_edit'])
+                    with self.assertRaises(ValueError):
+                        g.change(self.settings)
+                self.assertEqual(target.read_text(), INPUT)
+                self.assertFalse(g.JOURNAL.exists())
+                missing.unlink()
+
+    def test_stow_retarget_during_recovery_reload_preserves_journal(self):
+        config, target = self.stow_config('file')
+        alternate = target.with_name('alternate.lua')
+        after = INPUT + '-- pending edit\n'
+        target.write_text(after)
+        alternate.write_text(after)
+        journal = json.dumps(dict(version=2, before=INPUT, after=after, target=str(target)))
+        g.JOURNAL.write_text(journal)
+
+        def retarget():
+            g.INPUT.unlink()
+            g.INPUT.symlink_to(alternate)
+
+        with patch.object(g, 'INPUT', config / 'input.lua'):
+            with patch.object(g, 'reload_checked', side_effect=retarget):
+                with self.assertRaisesRegex(ValueError, 'target changed'):
+                    g.recover()
+            self.assertEqual(g.JOURNAL.read_text(), journal)
+            self.assertEqual(target.read_text(), INPUT)
+            self.assertEqual(alternate.read_text(), after)
+            g.INPUT.unlink()
+            g.INPUT.symlink_to(target)
+            g.recover()
+            self.assertFalse(g.JOURNAL.exists())
+            self.assertEqual(target.read_text(), INPUT)
+            self.assertEqual(alternate.read_text(), after)
+            self.assertTrue(g.INPUT.is_symlink())
+
+    def test_legacy_recovery_journal_refuses_new_stow_target(self):
+        config, target = self.stow_config('file')
+        after = INPUT + '-- pending edit\n'
+        journal = json.dumps(dict(version=1, before=INPUT, after=after))
+        g.JOURNAL.write_text(journal)
+        target.write_text(after)
+        with patch.object(g, 'INPUT', config / 'input.lua'):
+            with self.assertRaisesRegex(ValueError, 'target changed'):
+                g.recover()
+            self.assertTrue(g.INPUT.is_symlink())
+        self.assertEqual(target.read_text(), after)
+        self.assertEqual(g.JOURNAL.read_text(), journal)
+
+    def test_stow_reload_failure_restores_dotfile_and_link(self):
+        config, target = self.stow_config('file')
+        with patch.object(g, 'INPUT', config / 'input.lua'):
+            with patch.object(g, 'reload_checked', side_effect=[RuntimeError('reload failed'), None]):
+                with self.assertRaisesRegex(RuntimeError, 'reload failed'):
+                    g.change(self.settings)
+            self.assertTrue(g.INPUT.is_symlink())
+        self.assertEqual(target.read_text(), INPUT)
+        self.assertFalse(g.JOURNAL.exists())
+
+    def test_stow_unsafe_or_broken_targets_do_not_write(self):
+        for kind in ('loop', 'dangling', 'shared-directory', 'shared-file', 'fifo', 'hardlink'):
+            with self.subTest(kind=kind):
+                config, target = self.stow_config(kind)
+                link = config / 'input.lua'
+                if kind in ('loop', 'dangling'):
+                    link.unlink()
+                    link.symlink_to('input.lua' if kind == 'loop' else 'missing.lua')
+                elif kind == 'shared-directory':
+                    target.parent.chmod(0o777)
+                elif kind == 'shared-file':
+                    target.chmod(0o666)
+                elif kind == 'fifo':
+                    target.unlink()
+                    os.mkfifo(target)
+                else:
+                    os.link(target, target.with_name('alias.lua'))
+                with patch.object(g, 'INPUT', link):
+                    with self.assertRaises((ValueError, OSError)):
+                        g.change(self.settings)
+                self.assertTrue(link.is_symlink())
+                self.assertFalse(g.JOURNAL.exists())
+                if kind != 'fifo':
+                    self.assertEqual(target.read_text(), INPUT)
+
+    def test_stow_resolution_closes_directory_descriptors(self):
+        config, target = self.stow_config('file')
+        before = len(os.listdir('/proc/self/fd'))
+        for _ in range(100):
+            self.assertEqual(g.config_target(config / 'input.lua'), target)
+        self.assertEqual(len(os.listdir('/proc/self/fd')), before)
+        (config / 'input.lua').unlink()
+        (config / 'input.lua').symlink_to('input.lua')
+        for _ in range(100):
+            with self.assertRaisesRegex(ValueError, 'symlink loop'):
+                g.config_target(config / 'input.lua')
+        self.assertEqual(len(os.listdir('/proc/self/fd')), before)
 
     @patch("platform.machine", return_value="x86_64")
     def test_provider_probe_is_optional_and_checks_gesture_api(self, _machine):
