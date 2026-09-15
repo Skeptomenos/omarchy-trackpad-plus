@@ -32,6 +32,10 @@ class ControlError(Exception):
     """An actionable error containing no captured window data or raw IPC output."""
 
 
+class Cancelled(ControlError):
+    """A newer close withdrew this pending startup."""
+
+
 def no_core():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
@@ -129,6 +133,9 @@ class Controller:
         self.lock_path = self.directory / 'control.lock'
         self.last_spawn = None
         self.last_spawn_token = None
+        self.deadline = None
+        self.open_generation = None
+        self.generation_path = self.directory / 'close-generation'
 
     def read_version(self):
         try:
@@ -145,17 +152,17 @@ class Controller:
                 'opened': False, 'pending': False, 'result': 'not-running'}
 
     @contextmanager
-    def locked(self, create):
+    def locked(self, create, name='control.lock'):
         try:
             with state_directory(self.directory, create=create) as directory:
                 info = os.fstat(directory)
                 if info.st_uid != os.getuid() or info.st_mode & 0o077:
                     raise ControlError('Overview runtime directory must be private to this user.')
-                fd = os.open('control.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+                fd = os.open(name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
                              0o600, dir_fd=directory)
                 try:
                     check_file(os.fstat(fd))
-                    deadline = time.monotonic() + self.timeout
+                    deadline = self.deadline or time.monotonic() + self.timeout
                     while True:
                         try:
                             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -169,6 +176,35 @@ class Controller:
                     os.close(fd)
         except (ValueError, OSError) as exc:
             raise ControlError('Overview runtime ownership could not be verified.') from exc
+
+    def remaining(self):
+        if self.deadline is None:
+            return self.timeout
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise ControlError('Overview operation timed out; retry when ready.')
+        return remaining
+
+    def generation(self):
+        value = read_state_file(self.generation_path)
+        if value is None:
+            return ''
+        if len(value) != 64 or any(c not in '0123456789abcdef' for c in value):
+            raise ControlError('Overview close intent is invalid; no request was opened.')
+        return value
+
+    def cancelled(self):
+        return self.open_generation is not None and self.generation() != self.open_generation
+
+    def register_intent(self, operation):
+        # This lock protects only a small atomic marker, never startup or IPC.
+        # Register close before waiting for lifecycle work, so old flock waiters
+        # and a slow startup can observe cancellation even if close waits too.
+        with self.locked(operation in ('start', 'open', 'toggle'), 'intent.lock'):
+            if operation in ('close', 'stop'):
+                atomic_write(self.generation_path, secrets.token_hex(32))
+            elif operation in ('start', 'open', 'toggle'):
+                self.open_generation = self.generation()
 
     def record(self):
         try:
@@ -233,7 +269,7 @@ class Controller:
         argv = [self.qs, 'ipc', '--pid', str(record['pid']), 'call', 'trackpadOverview', operation]
         if operation != 'status':
             argv.append(record['token'])
-        return bounded_command(argv, self.env, self.timeout if timeout is None else timeout)
+        return bounded_command(argv, self.env, self.remaining() if timeout is None else timeout)
 
     def validate(self, record, reply):
         if (reply.get('protocol') != PROTOCOL or type(reply.get('pid')) is not int
@@ -276,7 +312,7 @@ class Controller:
                 return
             try:
                 signal.pidfd_send_signal(descriptor, signal.SIGTERM)
-                ready, _, _ = select.select([descriptor], [], [], self.timeout)
+                ready, _, _ = select.select([descriptor], [], [], min(self.timeout, 1.0))
                 if not ready:
                     signal.pidfd_send_signal(descriptor, signal.SIGKILL)
                     ready, _, _ = select.select([descriptor], [], [], 1.0)
@@ -308,8 +344,10 @@ class Controller:
             record = {'pid': process.pid, 'start': info['start'], 'config': self.config,
                       'argv': info['argv'], 'token': token, 'session': self.session, 'version': self.version}
             atomic_write(self.record_path, json.dumps(record))
-            deadline = time.monotonic() + self.timeout
+            deadline = self.deadline or time.monotonic() + self.timeout
             while time.monotonic() < deadline:
+                if self.cancelled():
+                    raise Cancelled('Overview startup was cancelled by a newer close.')
                 if process.poll() is not None:
                     raise ControlError('Overview exited during startup; check Quickshell dependencies.')
                 try:
@@ -339,10 +377,26 @@ class Controller:
     def execute(self, operation):
         if operation not in OPERATIONS:
             raise ControlError('Unsupported overview operation.')
+        self.deadline = time.monotonic() + self.timeout
+        self.open_generation = None
+        try:
+            if operation not in ('start', 'open', 'toggle') and not self.directory.exists():
+                return self.missing()
+            if operation != 'status':
+                self.register_intent(operation)
+            return self.execute_locked(operation)
+        except Cancelled:
+            return self.missing()
+        finally:
+            self.deadline = None
+
+    def execute_locked(self, operation):
         create = operation in ('start', 'open', 'toggle')
         if not create and not self.directory.exists():
             return self.missing()
         with self.locked(create):
+            if self.cancelled():
+                operation, create = 'status', False
             record = self.record()
             if record and not self.owns(record):
                 self.forget()
@@ -360,29 +414,36 @@ class Controller:
             else:
                 try:
                     reply = self.ipc(record, 'status')
+                    self.validate(record, reply)
                 except (ControlError, OSError):
                     if operation != 'close':
                         raise
                     # Close must release the input grab even if the UI event loop
-                    # cannot answer. OS ownership is checked again by stop_owned.
+                    # cannot answer or the reply is incompatible after an upgrade.
+                    # OS ownership is checked again by stop_owned.
                     self.stop_owned(record)
                     self.forget()
                     return self.missing()
-                self.validate(record, reply)
             try:
+                if self.cancelled() and operation in ('start', 'open', 'toggle'):
+                    return self.validate(record, self.ipc(record, 'close', min(self.timeout, 0.5)))
                 if operation in ('open', 'close', 'toggle'):
                     reply = self.ipc(record, operation)
                     self.validate(record, reply)
                 if operation in ('open', 'toggle'):
-                    deadline = time.monotonic() + self.timeout
+                    deadline = self.deadline
                     while reply['pending']:
+                        if self.cancelled():
+                            return self.validate(record, self.ipc(record, 'close', min(self.timeout, 0.5)))
                         if time.monotonic() >= deadline:
                             # Withdraw the pending request so a late unlock cannot open it.
-                            self.ipc(record, 'close')
+                            self.ipc(record, 'close', min(self.timeout, 0.5))
                             raise ControlError('Overview lock verification timed out; retry when unlocked.')
                         time.sleep(0.03)
                         reply = self.ipc(record, 'status', max(0.001, deadline - time.monotonic()))
                         self.validate(record, reply)
+                if self.cancelled() and operation in ('open', 'toggle'):
+                    reply = self.ipc(record, 'close', min(self.timeout, 0.5))
                 return self.validate(record, reply)
             except BaseException as error:
                 if created or operation == 'close':
@@ -393,7 +454,7 @@ class Controller:
                 elif operation in ('open', 'toggle'):
                     # A lost reply must not leave a pending request that opens later.
                     try:
-                        self.ipc(record, 'close')
+                        self.ipc(record, 'close', min(self.timeout, 0.5))
                     except ControlError:
                         self.stop_owned(record)
                         self.forget()

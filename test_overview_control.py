@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -36,6 +37,7 @@ while True:
     with conn:
         args = json.loads(conn.recv(65536)); op = args[0]
         if mode == 'timeout' or (root / 'hang-now').exists() or (op == 'close' and (root / 'hang-close').exists()): time.sleep(30)
+        if mode == 'slow': time.sleep(.18)
         if mode == 'oversized': conn.sendall(b'x'*20000); continue
         if mode == 'malformed': conn.sendall(b'not-json'); continue
         if op != 'status' and args[1] != os.environ['TRACKPAD_OVERVIEW_TOKEN']:
@@ -118,10 +120,114 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(replies[0]['pid'], replies[1]['pid'])
         self.assertTrue(all(r['opened'] for r in replies))
 
+    def test_later_close_cancels_older_open_waiting_for_lock(self):
+        self.c.execute('start')
+        queued = threading.Event()
+        release = threading.Event()
+        opener = self.make()
+        flock = control.fcntl.flock
+
+        def observe(fd, operation):
+            try:
+                return flock(fd, operation)
+            except BlockingIOError:
+                if threading.current_thread().name == 'earlier-open':
+                    queued.set()
+                    release.wait(2)
+                raise
+
+        result = {}
+        with patch.object(control.fcntl, 'flock', side_effect=observe):
+            with self.c.locked(False):
+                worker = threading.Thread(name='earlier-open',
+                    target=lambda: result.update(opener.execute('open')))
+                worker.start()
+                self.assertTrue(queued.wait(2))
+            try:
+                self.assertFalse(self.make().execute('close')['opened'])
+            finally:
+                release.set()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(result['opened'])
+        self.assertFalse(self.c.execute('status')['opened'])
+        # A fresh upward gesture after the close must still work.
+        self.assertTrue(self.make().execute('open')['opened'])
+
+    def test_close_during_startup_cancels_open(self):
+        started = threading.Event()
+        proceed = threading.Event()
+        opener = self.make()
+        launch = opener.launch
+        result = {}
+        def slow_launch():
+            started.set()
+            self.assertTrue(proceed.wait(2))
+            return launch()
+        with patch.object(opener, 'launch', side_effect=slow_launch):
+            worker = threading.Thread(target=lambda: result.update(opener.execute('open')))
+            worker.start()
+            self.assertTrue(started.wait(2))
+            closer = self.make()
+            close_result = {}
+            close_worker = threading.Thread(target=lambda: close_result.update(closer.execute('close')))
+            close_worker.start()
+            # Wait until the close has registered its intent, without depending
+            # on which contender the OS wakes first after startup.
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and not opener.cancelled():
+                time.sleep(.005)
+            proceed.set()
+            worker.join(3)
+            close_worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(close_worker.is_alive())
+        self.assertFalse(result['opened'])
+        self.assertFalse(close_result['opened'])
+        self.assertFalse(self.c.execute('status')['opened'])
+
+    def test_startup_and_open_share_one_deadline(self):
+        controller = self.make(FAKE_MODE='slow')
+        controller.timeout = .3
+        began = time.monotonic()
+        with self.assertRaises(control.ControlError):
+            controller.execute('open')
+        self.assertLess(time.monotonic() - began, .9)
+        controller.last_spawn.wait(timeout=1)
+        self.assertFalse(controller.record_path.exists())
+
     def test_close_ipc_timeout_stops_owned_process(self):
         self.c.execute('open')
         (self.runtime / 'hang-close').touch()
         self.assertFalse(self.c.execute('close')['reachable'])
+        self.c.last_spawn.wait(timeout=2)
+        self.assertFalse(self.c.record_path.exists())
+
+    def test_close_after_in_place_upgrade_stops_owned_old_version(self):
+        first = self.c.execute('open')
+        (self.base / 'manifest.json').write_text('{"version":"2026.09.15.0"}')
+        upgraded = self.make()
+        for operation in ('status', 'start', 'open', 'toggle'):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(control.ControlError, 'handshake failed'):
+                    upgraded.execute(operation)
+                os.kill(first['pid'], 0)
+        self.assertFalse(upgraded.execute('close')['reachable'])
+        self.c.last_spawn.wait(timeout=2)
+        self.assertFalse(upgraded.record_path.exists())
+
+    def test_close_invalid_status_stops_only_verified_owned_process(self):
+        self.c.execute('open')
+        original_ipc = self.c.ipc
+
+        def invalid_status(record, operation, timeout=None):
+            reply = original_ipc(record, operation, timeout)
+            if operation == 'status':
+                reply['protocol'] = 999
+            return reply
+
+        with patch.object(self.c, 'ipc', side_effect=invalid_status):
+            self.assertFalse(self.c.execute('close')['reachable'])
         self.c.last_spawn.wait(timeout=2)
         self.assertFalse(self.c.record_path.exists())
 
@@ -234,7 +340,7 @@ class LifecycleTests(unittest.TestCase):
     def test_existing_handshake_mismatch_is_not_replaced(self):
         reply = self.c.execute('start')
         self.c.version = 'new-version'
-        for op in ('start', 'open', 'close'):
+        for op in ('status', 'start', 'open', 'toggle'):
             with self.assertRaises(control.ControlError): self.c.execute(op)
         os.kill(reply['pid'], 0)
         # Stop may remove an old version only after OS-level ownership validation.
