@@ -99,13 +99,16 @@ alone is not proof that previews work on your system.
 
 Swipe up with your selected three or four fingers to open; swipe down, press
 Escape, or click **Close** to dismiss. Click a window to focus it, or a workspace
-heading to switch there, including an existing empty workspace. Tab or arrow keys
-move through controls; Enter selects. Horizontal swipes retain native workspace
-switching; changing workspace dismisses the overview.
+thumbnail in the top strip to switch there, including an existing empty workspace.
+The overview stays open while you browse: the larger previews below follow the
+current workspace. Tab or arrow keys move through controls; Enter selects.
+Horizontal swipes retain native workspace switching and update the open overview.
 
-The first version shows ordinary workspaces on the monitor where you opened it.
-Use the page controls for additional workspaces or windows. Other monitors,
-special workspaces, and hidden group members are excluded. Previews are static
+The top strip shows ordinary workspaces on the monitor where you opened it. Each
+thumbnail shows a representative window and the workspace's window count. The
+strip scrolls horizontally when needed; it has no workspace pages. The main area
+shows up to six windows at once, with page controls for additional windows. Other
+monitors, special workspaces, and hidden group members are excluded. Previews are static
 snapshots captured on opening or paging, not live video, and the transition does
 not follow your fingers continuously. An unavailable preview remains selectable.
 

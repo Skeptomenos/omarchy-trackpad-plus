@@ -106,4 +106,57 @@ function input(extra = {}) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'overview/Model.js'), 'utf8'), context);
   assert.equal(JSON.stringify(context.buildSnapshot(input())), JSON.stringify(Model.buildSnapshot(input())));
 }
-console.log('Overview model tests passed');
+// Exercise the actual compositor event handler with controlled monitor identity.
+// Real signal delivery on the invocation monitor is covered by the live harness.
+{
+  const shell = fs.readFileSync(path.join(__dirname, 'overview/shell.qml'), 'utf8');
+  const handler = shell.match(/function onFocusedWorkspaceChanged\(\) \{([\s\S]*?)\n        \}/);
+  assert.ok(handler, 'workspace event handler must exist');
+  const invoke = new Function('root', 'Hyprland', 'session', handler[1]);
+  function run(workspace, opened = true) {
+    const reasons = [];
+    const root = {monitorId: 0, currentWorkspace: 1, rebuilds: 0, rebuild() { this.rebuilds++; }};
+    const session = {opened, dismiss(reason) { reasons.push(reason); this.opened = false; }};
+    invoke(root, {focusedWorkspace: workspace}, session);
+    return {root, session, reasons};
+  }
+  const sameMonitor = run({id: 2, monitor: {id: 0}});
+  assert.equal(sameMonitor.root.currentWorkspace, 2);
+  assert.equal(sameMonitor.root.rebuilds, 1);
+  assert.equal(sameMonitor.session.opened, true);
+  assert.deepEqual(sameMonitor.reasons, []);
+  for (const workspace of [{id: 3, monitor: {id: 1}}, {id: 3, monitor: null}, null]) {
+    const result = run(workspace);
+    assert.deepEqual(result.reasons, ['workspace-changed']);
+    assert.equal(result.session.opened, false);
+    assert.equal(result.root.currentWorkspace, 1);
+    assert.equal(result.root.rebuilds, 0);
+  }
+  const hidden = run({id: 2, monitor: {id: 0}}, false);
+  assert.deepEqual(hidden.reasons, []);
+  assert.equal(hidden.root.rebuilds, 0);
+  assert.equal(hidden.root.currentWorkspace, 1);
+}
+// Selection rechecks session state after rebuild, which can dismiss the view.
+{
+  const shell = fs.readFileSync(path.join(__dirname, 'overview/shell.qml'), 'utf8');
+  const handler = shell.match(/function select\(kind, key\) \{([\s\S]*?)\n    \}/);
+  assert.ok(handler, 'selection handler must exist');
+  const invoke = new Function('kind', 'key', 'session', 'rebuild', 'Model', 'snapshot', 'Hyprland', 'monitorId', handler[1]);
+  function run(opened, lockState, dismissDuringRebuild = false) {
+    let dispatched = 0;
+    const session = {opened, lockState};
+    const model = Model.buildSnapshot(input());
+    const workspace = model.workspaces[0];
+    invoke('workspace', workspace.key, session, () => {
+      if (dismissDuringRebuild) session.opened = false;
+    }, Model, model, {workspaces: {values: [{id: workspace.id, monitor: {id: 0}, activate() { dispatched++; }}]}}, 0);
+    return dispatched;
+  }
+  assert.equal(run(true, 'unlocked'), 1);
+  assert.equal(run(false, 'unlocked'), 0);
+  assert.equal(run(true, 'locked'), 0);
+  assert.equal(run(true, 'unknown'), 0);
+  assert.equal(run(true, 'unlocked', true), 0);
+}
+console.log('Overview model, workspace event, and selection guard tests passed');

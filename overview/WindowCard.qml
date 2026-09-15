@@ -5,6 +5,7 @@ import QtQuick.Controls
 Button {
     id: card
     required property var entry
+    property bool compact: false
     property var source: null
     property bool captureEnabled: true
     property color foreground: "#ded4b8"
@@ -14,7 +15,7 @@ Button {
     signal queued(var card)
     Accessible.name: entry.title || entry.appId || "Window"
     hoverEnabled: true
-    padding: 8
+    padding: compact ? 2 : 8
 
     function beginCapture() {
         if (captureState !== "waiting") return;
@@ -38,7 +39,7 @@ Button {
     }
     contentItem: Item {
         Item {
-            anchors { top: parent.top; left: parent.left; right: parent.right; bottom: title.top; bottomMargin: 8 }
+            anchors { top: parent.top; left: parent.left; right: parent.right; bottom: title.top; bottomMargin: card.compact ? 0 : 8 }
             Loader {
                 id: previewLoader
                 anchors.fill: parent
@@ -57,23 +58,25 @@ Button {
             Text {
                 anchors.centerIn: parent
                 width: parent.width
-                text: card.captureState === "unavailable" ? "Preview unavailable\nSelect to open window" : "Loading preview…"
+                text: card.captureState === "unavailable" ? (card.compact ? "No preview" : "Preview unavailable\nSelect to open window") : "Loading…"
                 visible: card.captureState !== "ready"
                 color: Qt.alpha(card.foreground, 0.7)
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
-                font.pixelSize: 14
+                font.pixelSize: card.compact ? 11 : 14
             }
         }
         Text {
             id: title
+            visible: !card.compact
+            height: card.compact ? 0 : implicitHeight
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
             text: card.entry.title || card.entry.appId || "Window"
             textFormat: Text.PlainText
             elide: Text.ElideRight
             color: card.foreground
-            font.pixelSize: 14
+            font.pixelSize: card.compact ? 11 : 14
         }
     }
 }

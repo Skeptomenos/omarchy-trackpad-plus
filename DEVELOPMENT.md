@@ -52,7 +52,7 @@ This release identifier is separate from the backend's settings schema version.
   selection. Named and existing empty ordinary workspaces are included on the
   invocation monitor; special workspaces and hidden group members are excluded.
 - `overview/shell.qml`, `Overview.qml`, `WindowCard.qml`, and `Preview.qml`: separate
-  Quickshell application, compositor adapter, paged navigation, and single-frame
+  Quickshell application, compositor adapter, a scrolling workspace strip, six-window pages, and single-frame
   captures. At most two requests run concurrently; each has a two-second deadline.
   Only visible cards retain previews. Display dimensions do not bound compositor
   buffer allocation. No preview or title is written to disk, logs, or a network.
@@ -191,7 +191,7 @@ remain separate from this project's `origin`.
 
 `python3 tools/overview-check/check.py --cycles 100` verified real terminal
 previews on current and inactive workspaces, exact window selection, workspace
-selection, close/focus restoration, and dismissal after an external workspace
+selection, close/focus restoration, and (in the original grid layout) dismissal after an external workspace
 switch. Subsequent runs also checked a fullscreen terminal preview and forced companion
 termination, observer cleanup, and a capture-free explicit restart. No images
 were saved. The workload had two owned terminals plus the session's existing
@@ -208,3 +208,23 @@ The production lock check is interactive: `python3 tools/overview-check/check_lo
 Run it only when ready to unlock the desktop after five seconds. It checks
 capture teardown, rejected opens during lock and observer restart, no automatic
 reopening after unlock, and audio-control responsiveness.
+
+### Top workspace strip (2026-09-14)
+
+The strip displays a representative window per workspace. Its viewport is capped
+at 1320 logical pixels, with at most seven intersecting thumbnail cards and six
+main-area window previews retained (thirteen captures total, two pending at a
+time). Offscreen thumbnails unload their captures; lightweight workspace buttons
+remain available for keyboard navigation. Workspace selection and native
+workspace changes on the invocation monitor keep the overview open; selecting a
+window still closes and activates it. Escape restores the original focus only
+when still on the original workspace. Switching focus to another monitor dismisses
+instead of pulling that monitor's workspaces into the view.
+
+The updated live harness checks actual current and inactive workspace thumbnail
+pixels without activating the inactive workspace, stays open across strip selection
+and external workspace changes, and verifies title/no-op
+stability, fullscreen capture, exact window selection, and crash cleanup. A ten-cycle
+M2 run recorded cold open 372 ms, warm median 201 ms, RSS settling to 156,608 KiB,
+and 44 file descriptors after dismissal. These measurements remain experimental;
+physical gesture feel and the full-view interactive lock check still need acceptance.

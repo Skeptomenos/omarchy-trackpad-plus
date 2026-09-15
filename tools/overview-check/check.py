@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Live overview integration check using owned terminals; never saves images.
 
-Requires an unlocked session and an existing inactive workspace on its monitor.
-Temporarily opens the overview, focuses only its own fixtures, then restores focus.
+Requires an unlocked session. Creates an inactive workspace for an owned fixture,
+temporarily opens the overview, then removes its fixtures and restores focus.
 """
 import argparse
 import importlib.util
@@ -54,14 +54,8 @@ def wait_for(check, seconds=4):
 INSTRUMENT = r'''
     TestResult { id: pixels }
     function testCards() {
-        let cards = [];
-        function walk(item) {
-            if (!item) return;
-            if (item.captureState !== undefined) cards.push(item);
-            for (let child of item.children || []) walk(child);
-        }
-        if (overlay.item) walk(overlay.item.contentItem);
-        return cards;
+        const view = root.testOverview();
+        return view ? view.cards.filter(card => card && card.captureState !== undefined && card.captureState !== "retired") : [];
     }
     function testOverview() {
         let found = null;
@@ -73,37 +67,45 @@ INSTRUMENT = r'''
         if (overlay.item) walk(overlay.item.contentItem);
         return found;
     }
-    function testGroup(address) {
-        const overview = root.testOverview();
-        let found = null;
-        function walk(item) {
-            if (!item || found) return;
-            if (item.windowPage !== undefined && item.modelData && item.modelData.windows
-                && item.modelData.windows.some(window => window.address === address)) { found = item; return; }
-            for (let child of item.children || []) walk(child);
-        }
-        walk(overview);
-        return found;
-    }
     IpcHandler {
         target: "overviewCheck"
         function fixture(address: string): string {
-            const card = root.testCards().find(c => c.entry.address === address);
+            const card = root.testCards().find(c => c.entry.address === address && !c.compact);
             if (!card) return "not-visible";
             return card.captureState;
         }
-        function pixelsOk(address: string): bool {
-            const card = root.testCards().find(c => c.entry.address === address);
+        function pixelsOk(address: string, thumbnail: bool): bool {
+            const card = root.testCards().find(c => c.entry.address === address && c.compact === thumbnail);
             if (!card || card.captureState !== "ready") return false;
             const image = pixels.grabImage(card);
             let low = 255, high = 0;
             // Exclude borders, footer title and controls from the contrast check.
-            for (let row = 2; row < 32; row++) for (let col = 2; col < 38; col++) {
-                const x = Math.floor(image.width * col / 40), y = Math.floor(image.height * row / 40);
+            const step = thumbnail ? 1 : Math.max(1, Math.floor(image.width / 100));
+            for (let y = Math.ceil(image.height * .1); y < image.height * .8; y += step)
+                for (let x = Math.ceil(image.width * .1); x < image.width * .9; x += step) {
                 const value = (image.red(x,y) + image.green(x,y) + image.blue(x,y)) / 3;
                 low = Math.min(low,value); high = Math.max(high,value);
             }
             return high - low > 80;
+        }
+        function revealThumbnail(address: string): bool {
+            const overview = root.testOverview();
+            if (!overview) return false;
+            const index = root.snapshot.workspaces.findIndex(workspace => {
+                const representative = workspace.windows.find(w => w.active) || workspace.windows[0];
+                return representative && representative.address === address;
+            });
+            if (index < 0) return false;
+            let strip = null;
+            function walk(item) {
+                if (!item || strip) return;
+                if (item.objectName === "workspaceStrip") { strip = item; return; }
+                for (let child of item.children || []) walk(child);
+            }
+            walk(overview);
+            if (!strip) return false;
+            strip.positionViewAtIndex(index, ListView.Contain);
+            return true;
         }
         function selectFixture(address: string): bool {
             const entry = root.snapshot.workspaces.reduce((all, w) => all.concat(w.windows), []).find(w => w.address === address);
@@ -117,22 +119,20 @@ INSTRUMENT = r'''
             root.select("workspace", workspace.key);
             return true;
         }
-        function setWindowPage(address: string, page: int): string {
-            const group = root.testGroup(address);
-            if (!group || group.windowPages <= page) return "unavailable";
-            group.windowPage = page;
-            return JSON.stringify({group: String(group), page: group.windowPage});
-        }
-        function cardAndPage(cardAddress: string, groupAddress: string): string {
-            const card = root.testCards().find(c => c.entry.address === cardAddress);
-            const group = root.testGroup(groupAddress);
-            if (!card || !group) return "unavailable";
+        function cardAndPage(address: string): string {
+            const card = root.testCards().find(c => c.entry.address === address && !c.compact);
+            const overview = root.testOverview();
+            if (!card || !overview) return "unavailable";
             return JSON.stringify({card: String(card), capture: card.captureState,
-                group: String(group), page: group.windowPage});
+                workspace: overview.activeWorkspace.id, page: overview.windowPage});
         }
-        function rebuildNoop(cardAddress: string, groupAddress: string): string {
+        function rebuildNoop(address: string): string {
             root.rebuild();
-            return cardAndPage(cardAddress, groupAddress);
+            return cardAndPage(address);
+        }
+        function currentWorkspace(): int {
+            const overview = root.testOverview();
+            return overview && overview.activeWorkspace ? overview.activeWorkspace.id : 0;
         }
     }
 }
@@ -154,7 +154,9 @@ def main():
     assert command('omarchy-shell', 'lock', 'isLocked') == 'false'
     prior = hypr('activewindow').get('address')
     original = hypr('activeworkspace')
-    other = next(w for w in hypr('workspaces') if w['id'] > 0 and w['id'] != original['id'] and w['monitor'] == original['monitor'])
+    # A new workspace makes our second fixture the real representative without
+    # rearranging any user windows or substituting a test-only snapshot.
+    other_id = max([w['id'] for w in hypr('workspaces')] + [0]) + 1
     owned = []
     with tempfile.TemporaryDirectory(prefix='trackpad-overview-live-') as directory:
         base = Path(directory)
@@ -167,7 +169,7 @@ def main():
         companion = control.Controller(base)
         try:
             title_files = []
-            for index in range(5):
+            for index in range(2):
                 title_file = base / ('fixture-title-' + str(index))
                 title_file.write_text('Trackpad Plus overview check')
                 title_files.append(title_file)
@@ -185,9 +187,12 @@ def main():
                     '--title=Trackpad Plus overview check', '--hold', 'python3', '-c', fixture_program],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0))))
-            fixtures = wait_for(lambda: (windows if len(windows := [w for w in hypr('clients') if w['pid'] in [p.pid for p in owned]]) == 5 else None))
-            first, second = fixtures[:2]
-            evaluate('hl.dispatch(hl.dsp.window.move({workspace="%d",window="address:%s",follow=false}))' % (other['id'], second['address']))
+            fixtures = wait_for(lambda: (windows if len(windows := [w for w in hypr('clients') if w['pid'] in [p.pid for p in owned]]) == 2 else None))
+            first, second = [next(w for w in fixtures if w['pid'] == process.pid) for process in owned]
+            assert not any(w['id'] == other_id for w in hypr('workspaces')), 'Temporary workspace was created concurrently'
+            evaluate('hl.dispatch(hl.dsp.window.move({workspace="%d",window="address:%s",follow=false}))' % (other_id, second['address']))
+            other = wait_for(lambda: next((w for w in hypr('workspaces') if w['id'] == other_id), None))
+            assert other['monitor'] == original['monitor'], 'Temporary fixture workspace is on a different monitor'
             evaluate('hl.dispatch(hl.dsp.focus({window="address:%s"}))' % first['address'])
             time.sleep(.25)
             begin = time.monotonic()
@@ -196,30 +201,31 @@ def main():
             wait_for(lambda: companion.execute('status')['rendered'])
             cold = round((time.monotonic() - begin) * 1000)
             ipc = lambda method, *values: command('qs', 'ipc', '--pid', str(pid), 'call', 'overviewCheck', method, *map(str, values))
-            for fixture in (first, second):
-                wait_for(lambda: ipc('fixture', fixture['address']) == 'ready')
-                assert ipc('pixelsOk', fixture['address']) == 'true', 'Preview has no contrasting application pixels'
+            wait_for(lambda: ipc('fixture', first['address']) == 'ready')
+            assert ipc('pixelsOk', first['address'], 'false') == 'true', 'Preview has no contrasting application pixels'
             assert hypr('activeworkspace')['id'] == original['id'], 'Capturing changed the active workspace'
-            # Keep four owned windows on the original workspace, select its
-            # second page, then prove an OSC title change and a no-op rebuild do
-            # not replace that page or the ready card on the other workspace.
-            page = json.loads(ipc('setWindowPage', first['address'], 1))
-            assert page['page'] == 1, 'Fixture workspace needs a second window page'
-            before_title = json.loads(ipc('cardAndPage', second['address'], first['address']))
-            assert before_title['page'] == 1 and before_title['capture'] == 'ready'
-            assert json.loads(ipc('rebuildNoop', second['address'], first['address'])) == before_title, 'No-op rebuild replaced the visible card or page'
+            wait_for(lambda: ipc('pixelsOk', first['address'], 'true') == 'true')
+            focused_before = hypr('activewindow').get('address')
+            assert ipc('revealThumbnail', second['address']) == 'true', 'Inactive fixture is not the workspace representative'
+            wait_for(lambda: ipc('pixelsOk', second['address'], 'true') == 'true')
+            assert hypr('activeworkspace')['id'] == original['id'], 'Inactive thumbnail capture activated its workspace'
+            assert ipc('currentWorkspace') == str(original['id']), 'Inactive thumbnail changed the overview workspace'
+            assert hypr('activewindow').get('address') == focused_before, 'Inactive thumbnail capture changed window focus'
+            assert ipc('revealThumbnail', first['address']) == 'true'
+            print('PASS: current and inactive workspace thumbnails contain fixture pixels without changing workspace or focus')
+            before_title = json.loads(ipc('cardAndPage', first['address']))
+            assert json.loads(ipc('rebuildNoop', first['address'])) == before_title, 'No-op rebuild replaced ready card'
             title_files[0].write_text('Trackpad Plus overview title update')
             wait_for(lambda: next(window for window in hypr('clients') if window['pid'] == owned[0].pid)['title'] == 'Trackpad Plus overview title update')
             time.sleep(.25)
-            after_title = json.loads(ipc('cardAndPage', second['address'], first['address']))
-            assert after_title == before_title, 'Title-only update replaced the visible card or page'
-            print('PASS: title and no-op updates preserve ready capture and window page')
+            assert json.loads(ipc('cardAndPage', first['address'])) == before_title, 'Title-only update replaced ready card'
+            print('PASS: title and no-op updates preserve ready capture')
             companion.execute('close')
             evaluate('hl.dispatch(hl.dsp.window.fullscreen({window="address:%s",mode="fullscreen"}))' % first['address'])
             time.sleep(.4)
             companion.execute('open')
             wait_for(lambda: ipc('fixture', first['address']) == 'ready')
-            assert ipc('pixelsOk', first['address']) == 'true', 'Fullscreen preview is blank'
+            assert ipc('pixelsOk', first['address'], 'false') == 'true', 'Fullscreen preview is blank'
             companion.execute('close')
             evaluate('hl.dispatch(hl.dsp.window.fullscreen({window="address:%s",mode="fullscreen"}))' % first['address'])
             companion.execute('close')
@@ -227,6 +233,11 @@ def main():
             assert not companion.execute('status')['mapped']
             companion.execute('open')
             wait_for(lambda: companion.execute('status')['rendered'])
+            assert ipc('selectWorkspace', other['id']) == 'true'
+            wait_for(lambda: ipc('currentWorkspace') == str(other['id']))
+            assert companion.execute('status')['opened'], 'Strip selection closed overview'
+            wait_for(lambda: ipc('fixture', second['address']) == 'ready')
+            assert ipc('pixelsOk', second['address'], 'false') == 'true', 'Switched workspace preview is blank'
             assert ipc('selectFixture', second['address']) == 'true'
             wait_for(lambda: hypr('activewindow').get('address') == second['address'])
             assert hypr('activeworkspace')['id'] == other['id']
@@ -237,9 +248,11 @@ def main():
             companion.execute('open')
             wait_for(lambda: companion.execute('status')['mapped'])
             evaluate('hl.dispatch(hl.dsp.focus({workspace="%d"}))' % other['id'])
-            wait_for(lambda: not companion.execute('status')['opened'])
+            wait_for(lambda: ipc('currentWorkspace') == str(other['id']))
+            assert companion.execute('status')['opened'], 'External workspace switch closed overview'
             assert hypr('activeworkspace')['id'] == other['id']
             evaluate('hl.dispatch(hl.dsp.focus({workspace="%d"}))' % original['id'])
+            companion.execute('close')
             print('PASS: current/inactive workspace pixels, exact window selection, workspace selection, close/focus, external workspace change')
             before = usage(pid)
             peak = dict(before)
@@ -276,18 +289,21 @@ def main():
             print('PASS: forced companion exit releases observer; explicit restart stays hidden')
 
         finally:
-            companion.execute('stop')
-            for process in owned:
-                if process.poll() is None:
-                    process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill(); process.wait()
-            if command('omarchy-shell', 'lock', 'isLocked') == 'false':
-                evaluate('hl.dispatch(hl.dsp.focus({workspace="%d"}))' % original['id'])
-                if prior and any(w['address'] == prior for w in hypr('clients')):
-                    evaluate('hl.dispatch(hl.dsp.focus({window="address:%s"}))' % prior)
+            try:
+                companion.execute('stop')
+            finally:
+                for process in owned:
+                    if process.poll() is None:
+                        process.terminate()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill(); process.wait()
+                if command('omarchy-shell', 'lock', 'isLocked') == 'false':
+                    evaluate('hl.dispatch(hl.dsp.focus({workspace="%d"}))' % original['id'])
+                    if prior and any(w['address'] == prior for w in hypr('clients')):
+                        evaluate('hl.dispatch(hl.dsp.focus({window="address:%s"}))' % prior)
+
 
 
 if __name__ == '__main__':

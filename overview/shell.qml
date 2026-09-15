@@ -13,6 +13,7 @@ ShellRoot {
     property int monitorId: -1
     property string monitorName: ""
     property int priorWorkspace: 0
+    property int currentWorkspace: 0
     property var priorWindow: null
     property var activation: null
     property color foreground: "#ded4b8"
@@ -40,7 +41,7 @@ ShellRoot {
             workspaces: Hyprland.workspaces.values.map(w => ({id: w.id, name: w.name,
                 monitorID: w.monitor ? w.monitor.id : null})), windows: windows,
             activeAddress: priorWindow ? priorWindow.address : "",
-            activeWorkspaceId: priorWorkspace});
+            activeWorkspaceId: currentWorkspace});
         // Preserve live cards and their paging when a compositor event leaves
         // the overview model unchanged. Titles refresh on the next open.
         if (JSON.stringify(next) !== JSON.stringify(snapshot)) snapshot = next;
@@ -51,9 +52,15 @@ ShellRoot {
     }
     function select(kind, key) {
         rebuild();
+        if (!session.opened || session.lockState !== "unlocked") return;
         const entry = Model.resolveSelection(snapshot, {kind: kind, key: key});
         if (!entry) return;
-        const record = kind === "window" ? lifetimes.find(r => r.token === entry.token) : null;
+        if (kind === "workspace") {
+            const workspace = Hyprland.workspaces.values.find(w => w.id === entry.id && w.monitor && w.monitor.id === monitorId);
+            if (workspace) workspace.activate();
+            return;
+        }
+        const record = lifetimes.find(r => r.token === entry.token);
         activation = {kind: kind, entry: entry, source: record ? record.source : null};
         session.dismiss("selection");
         activateDelay.restart();
@@ -70,6 +77,7 @@ ShellRoot {
             root.monitorId = monitor.id;
             root.monitorName = monitor.name;
             root.priorWorkspace = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 0;
+            root.currentWorkspace = root.priorWorkspace;
             root.priorWindow = Hyprland.activeToplevel;
             root.rebuild();
             Hyprland.refreshMonitors();
@@ -95,11 +103,6 @@ ShellRoot {
             if (!action || session.opened || session.pending || session.lockState !== "unlocked") return;
             const monitor = Hyprland.monitors.values.find(m => m.id === root.monitorId);
             if (!monitor) return;
-            if (action.kind === "workspace") {
-                const workspace = Hyprland.workspaces.values.find(w => w.id === action.entry.id && w.monitor === monitor);
-                if (workspace) workspace.activate();
-                return;
-            }
             const source = action.source;
             if (!source || Hyprland.toplevels.values.indexOf(source) < 0 || source.monitor !== monitor || !source.wayland) return;
             if (action.kind === "restore") {
@@ -116,8 +119,13 @@ ShellRoot {
     Connections {
         target: Hyprland
         function onFocusedWorkspaceChanged() {
-            if (session.opened && (!Hyprland.focusedWorkspace || Hyprland.focusedWorkspace.id !== root.priorWorkspace))
-                session.dismiss("workspace-changed");
+            if (!session.opened) return;
+            const workspace = Hyprland.focusedWorkspace;
+            if (!workspace || !workspace.monitor || workspace.monitor.id !== root.monitorId) {
+                session.dismiss("workspace-changed"); return;
+            }
+            root.currentWorkspace = workspace.id;
+            root.rebuild();
         }
         function onRawEvent(event) {
             if (!session.opened) return;

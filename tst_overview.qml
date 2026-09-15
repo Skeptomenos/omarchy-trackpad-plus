@@ -21,20 +21,44 @@ TestCase {
         view.forceActiveFocus();
         wait(30);
     }
-    function test_paging() {
-        compare(view.pageCount, 2);
-        mouseClick(findChild(view, "nextPage"));
-        compare(view.page, 1);
-        mouseClick(findChild(view, "previousPage"));
-        compare(view.page, 0);
+    function test_workspace_strip_and_current_windows() {
+        const strip = findChild(view, "workspaceStrip");
+        verify(strip);
+        compare(strip.count, 7);
+        compare(view.activeWorkspace.id, 1);
+        compare(view.windowCount, 1);
+        const spy = createTemporaryObject(spyComponent, test, {target: view, signalName: "selected"});
+        mouseClick(findChild(view, "workspace-w2"));
+        compare(spy.count, 1);
+        compare(spy.signalArguments[0][0], "workspace");
+        compare(spy.signalArguments[0][1], "w2");
+        // Content follows compositor acknowledgement, not a speculative click.
+        compare(view.activeWorkspace.id, 1);
+        const groups = view.snapshot.workspaces.map(w => Object.assign({}, w, {active: w.id === 2}));
+        view.snapshot = {workspaces: groups};
+        compare(view.activeWorkspace.id, 2);
+        compare(view.windowCount, 0);
+        verify(findChild(view, "emptyWorkspace").visible);
+        compare(findChild(view, "nextPage"), null);
+    }
+    function test_strip_overflow_and_window_paging() {
         view.width = 700;
-        compare(view.pageCount, 4);
+        const strip = findChild(view, "workspaceStrip");
+        verify(strip.contentWidth > strip.width);
+        const windows = [];
+        for (let i = 0; i < 9; i++) windows.push({key: "window" + i, title: "Window " + i});
+        view.snapshot = {workspaces: [{key: "w9", id: 9, name: "9", active: true, windows: windows}]};
+        compare(view.windowPageCount, 2);
+        mouseClick(findChild(view, "nextWindows"));
+        compare(view.windowPage, 1);
+        view.snapshot = {workspaces: [{key: "w9", id: 9, name: "9", active: true, windows: windows.slice(0, 1)}]};
+        compare(view.windowPage, 0);
     }
     function test_failed_capture_remains_selectable() {
         const spy = createTemporaryObject(spyComponent, test, {target: view, signalName: "selected"});
         const cards = [];
         function walk(item) {
-            if (item.captureState !== undefined) cards.push(item);
+            if (item.captureState !== undefined && !item.compact) cards.push(item);
             for (let child of item.children) walk(child);
         }
         walk(view);
@@ -51,16 +75,92 @@ TestCase {
         keyClick(Qt.Key_Right);
         verify(!cards[0].activeFocus);
     }
+    function test_keyboard_reaches_all_overflow_workspaces() {
+        view.width = 628; // Four 136px cards and three 12px gaps inside the margins.
+        const groups = [];
+        for (let i = 0; i < 20; i++) groups.push({key: "keys" + i, id: i + 1, name: String(i + 1), active: i === 0,
+            windows: [{key: "keythumb" + i, title: "Window " + i}]});
+        view.snapshot = {workspaces: groups};
+        const strip = findChild(view, "workspaceStrip");
+        tryCompare(strip, "width", 580);
+        compare(strip.cardWidth, 136);
+        tryVerify(() => findChild(view, "workspace-keys0") !== null);
+        wait(30);
+        findChild(view, "workspace-keys0").forceActiveFocus();
+        for (const forward of [Qt.Key_Right, Qt.Key_Tab]) {
+            for (let i = 1; i < 20; i++) {
+                keyClick(forward);
+                tryCompare(view.activeFocusItem(), "objectName", "workspace-keys" + i);
+                verify(view.cards.filter(c => c && c.compact && c.captureState !== "retired").length <= 7);
+            }
+            verify(strip.contentX > 0);
+            for (let i = 18; i >= 0; i--) {
+                keyClick(forward === Qt.Key_Right ? Qt.Key_Left : Qt.Key_Backtab);
+                tryCompare(view.activeFocusItem(), "objectName", "workspace-keys" + i);
+                verify(view.cards.filter(c => c && c.compact && c.captureState !== "retired").length <= 7);
+            }
+            tryCompare(strip, "contentX", 0);
+        }
+    }
+    function test_nonzero_window_page_survives_equivalent_snapshot() {
+        const windows = [];
+        for (let i = 0; i < 9; i++) windows.push({key: "stable" + i, title: "Window " + i, active: i === 0});
+        const group = {key: "stable", id: 1, name: "1", active: true, windows: windows};
+        view.snapshot = {workspaces: [group]};
+        mouseClick(findChild(view, "nextWindows"));
+        compare(view.windowPage, 1);
+        for (const titleOnly of [false, true]) {
+            const copy = JSON.parse(JSON.stringify(group));
+            if (titleOnly) copy.windows[8].title = "Updated title";
+            view.snapshot = {workspaces: [copy]};
+            compare(view.windowPage, 1);
+            tryVerify(() => view.cards.some(c => c && !c.compact && c.entry.key === "stable8"));
+        }
+    }
+    function test_populated_strip_unloads_offscreen_previews() {
+        const groups = [];
+        for (let i = 0; i < 20; i++) groups.push({key: "strip" + i, id: i + 1, name: String(i + 1), active: i === 0,
+            windows: [{key: "thumb" + i, title: "Window " + i}]});
+        view.snapshot = {workspaces: groups};
+        const strip = findChild(view, "workspaceStrip");
+        tryVerify(() => view.cards.some(c => c && c.compact && c.entry.key === "thumb0"));
+        for (let i = 0; i < 3; i++) {
+            strip.positionViewAtEnd();
+            tryVerify(() => !view.cards.some(c => c && c.compact && c.captureState !== "retired" && c.entry.key === "thumb0"));
+            tryVerify(() => view.cards.filter(c => c && c.compact && c.captureState !== "retired").length <= 7);
+            strip.positionViewAtBeginning();
+            tryVerify(() => view.cards.some(c => c && c.compact && c.entry.key === "thumb0"));
+        }
+        tryCompare(view, "inFlight", 0);
+    }
+    function test_quick_workspace_changes_select_active_window_page() {
+        const windows = [];
+        for (let i = 0; i < 9; i++) windows.push({key: "quick" + i, title: "Window " + i, active: i === 8});
+        for (let id = 10; id <= 15; id++) {
+            view.snapshot = {workspaces: [{key: "rapid" + id, id: id, name: String(id), active: true, windows: windows}]};
+        }
+        compare(view.activeWorkspace.id, 15);
+        compare(view.windowPage, 1);
+        tryVerify(() => view.cards.some(c => c && !c.compact && c.entry.key === "quick8"));
+        const spy = createTemporaryObject(spyComponent, test, {target: view, signalName: "dismiss"});
+        keyClick(Qt.Key_Escape);
+        compare(spy.count, 1);
+        compare(view.activeWorkspace.id, 15);
+    }
+    function test_visible_thumbnails_are_created() {
+        tryVerify(() => view.cards.some(c => c && c.compact));
+    }
     function test_escape() {
         const spy = createTemporaryObject(spyComponent, test, {target: view, signalName: "dismiss"});
         keyClick(Qt.Key_Escape);
         compare(spy.count, 1);
     }
-    function test_removed_workspaces_clamp_page() {
-        view.page = 1;
+    function test_removed_workspace_does_not_choose_another() {
+        view.snapshot = {workspaces: view.snapshot.workspaces.slice(1)};
+        compare(view.activeWorkspace, null);
+        compare(view.windowCount, 0);
         view.snapshot = {workspaces: []};
-        compare(view.page, 0);
-        compare(view.pageCount, 1);
+        compare(view.windowPage, 0);
     }
     Component {
         id: pendingCard
