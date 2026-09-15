@@ -36,16 +36,17 @@ This release identifier is separate from the backend's settings schema version.
   adoption of literal bindings in input.lua, marked-block persistence and
   compare-before-restore recovery. Uses the existing bounded subprocesses,
   secure file writes, and state lock; never mixes gestures into device settings.
-  Managed block schema 6 opens the overview on upward gesture recognition;
+  Managed block schema 7 opens the overview on upward gesture recognition;
   there is no upward finish callback to reopen or undo it. Downward finish
-  retains cancellation handling. Schemas 2–5
-  remain readable and restorable; legacy overview maps to HyMission, and
+  retains cancellation handling. A scoped layer rule suppresses compositor fades
+  for the built-in overview only. Schemas 2–6 remain readable and restorable; legacy overview maps to HyMission, and
   only an explicit edit upgrades the block. Provider detection must not start
   capture or replace the user's selection. HyMission's architecture guard applies
   only to that provider. Native horizontal bindings remain independent.
 - `overview-control.py`: bounded, session-specific launcher and controller with
   a private runtime lock, process ownership checks, and versioned IPC handshake.
-  Status/close/stop do not start a companion. It imports secure file helpers from
+  Status/close/stop do not start a companion. A later close cancels older queued
+  opens, and startup and IPC share one operation deadline. It imports secure file helpers from
   `trackpads.py` but never edits pointer or gesture settings.
 - `overview/Session.qml` / `lock-watch.py`: authenticated control and fail-closed
   Wayland lock observation. Visibility is permission to build the view, not proof
@@ -58,7 +59,10 @@ This release identifier is separate from the backend's settings schema version.
   captures. At most two requests run concurrently; each has a two-second deadline.
   Only visible cards retain previews. Display dimensions do not bound compositor
   buffer allocation. No preview or title is written to disk, logs, or a network.
-  The application reads theme colors without importing the bar's QML components.
+  `PreparedWallpaper.qml` retains the background while hidden and gates each
+  opening on readiness or a fixed fallback deadline. The foreground view is
+  destroyed on close, releasing its capture sources. The application reads theme
+  colors without importing the bar's QML components.
 - `Model.js`: numeric helpers and inherited legacy parsing utilities.
 - `touchpad-state` / `touchpad-sensitivity`: inherited legacy CLI helpers,
   retained for compatibility; the current panel uses `trackpads.py` instead.

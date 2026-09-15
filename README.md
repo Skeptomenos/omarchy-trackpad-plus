@@ -14,9 +14,31 @@ It is independently maintained and has expanded to include per-device
 controls, Apple trackpad support, and advanced pointer-feel tuning.
 The original project and this derivative are licensed under the MIT License.
 
-## Controls
+## Three tabs, one selected trackpad
 
-<img src="assets/screenshots/trackpad-controls.png" alt="Trackpad Plus controls on a MacBook Air M2, showing scroll speed, pointer feel, and trackpad toggles" width="340">
+Select a trackpad at the top, then choose **Pointer**, **Scrolling**, or
+**Gestures**. The top-right gear contains **Enable trackpad** and **Device scale**.
+Pointer and scrolling settings are saved separately for each device group;
+gestures apply across trackpads.
+
+<table>
+  <tr><th>Pointer</th><th>Scrolling</th><th>Gestures</th></tr>
+  <tr>
+    <td valign="top"><img src="assets/screenshots/pointer-tab.png" alt="Pointer tab on an Apple trackpad: Custom pointer feel, Tap to Click, Disable While Typing, and Two-Finger Right Click" width="260"></td>
+    <td valign="top"><img src="assets/screenshots/scrolling-tab.png" alt="Scrolling tab on an Apple trackpad: Scroll Speed at 0.10× and Natural Scrolling off" width="260"></td>
+    <td valign="top"><img src="assets/screenshots/gestures-tab.png" alt="Gestures tab: three-finger workspace swipes, distance 200, and the Trackpad Plus overview provider with test and apply controls" width="260"></td>
+  </tr>
+</table>
+
+- **Pointer:** choose a pointer-feel profile or edit its acceleration curve;
+  configure tapping, typing protection, and two-finger right click. System and
+  Flat profiles also expose **Pointer Speed**.
+- **Scrolling:** adjust **Scroll Speed** and **Natural Scrolling** independently
+  of the pointer curve.
+- **Gestures:** configure horizontal workspace swipes and an optional upward
+  swipe for the workspace overview. Test the overview before applying gestures.
+
+### Available controls
 
 - Enable or disable the selected trackpad.
 - Scroll speed (0.01–1.00, in 0.01 steps) with a per-device scale, and pointer speed (−1.0–1.0).
@@ -37,8 +59,8 @@ preview until you press **Apply & try**.
 
 The footer shows the installed version, starting with **2026.09.13.0**. Releases
 use **YYYY.MM.DD.N**: release date followed by a revision starting at 0 and
-increasing for additional releases that day. The screenshots show the earlier layout, before tabs and the version footer
-were added.
+increasing for additional releases that day. The tab screenshots show
+**2026.09.14.1**; the footer reflects the version you have installed.
 
 The built-in Apple Silicon trackpad (`apple-mtp-multi-touch`) and Apple Magic
 Trackpad interfaces share one set of Apple settings. The known
@@ -49,12 +71,11 @@ The Lenovo Synaptics `synaptics-tm3512-010` is also recognized despite lacking
 either word in its name. Its separate TrackPoint is excluded. Other trackpads
 whose names omit both words may still need an explicit detection rule.
 
-## Tabs and workspace gestures
+## Workspace gestures
 
-Use **Pointer** for pointer feel, tapping, right click, and typing protection;
-**Scrolling** for scroll speed and direction; and **Gestures** for workspace
-navigation. The gear beside the selected device contains **Enable trackpad**
-and **Device scale**. Pending pointer/scroll slider edits save before switching tabs.
+Open the **Gestures** tab. Pointer and scrolling changes save as you use them,
+including pending slider edits before switching tabs. Gesture changes stay in a
+draft until you press **Apply gestures**.
 
 In **Gestures**, enable horizontal workspace swiping, choose **3 or 4 fingers**,
 optionally reverse direction, and adjust **Swipe distance** (50–2000). Lower
@@ -97,8 +118,8 @@ for overview** and pressing **Apply gestures**. Installing or inspecting the
 companion does not enable gestures. A successful process start or IPC connection
 alone is not proof that previews work on your system.
 
-Swipe up with your selected three or four fingers to open; swipe down, press
-or Escape to dismiss. Click a window to focus it, or a workspace
+Swipe up with your selected three or four fingers to open; swipe down or press
+Escape to dismiss. Click a window to focus it, or a workspace
 thumbnail in the top strip to switch there, including an existing empty workspace.
 Both selections close the overview immediately. The **+** tile creates and
 enters an unused numbered workspace. Tab or arrow keys move through controls;
@@ -122,21 +143,36 @@ images and window titles are not written to files, logs, or network services.
 Capture is limited to visible thumbnails and the current window page, with two simultaneous requests and a
 per-card deadline. Large source windows can still require large graphics buffers.
 
-Gesture block schemas 2–5 remain readable and restorable. An explicit edit
-writes schema 6 with the selected provider; this is separate from the pointer
+Gesture block schemas 2–6 remain readable and restorable. An explicit edit
+writes schema 7 with the selected provider; this is separate from the pointer
 settings schema. With Trackpad Plus selected, Hyprland 0.56.2 gesture callbacks
 open the overview as soon as the upward swipe is recognized, without waiting for
 finger release. Reversing or cancelling the swipe afterward does not undo the
 opening, and release never opens it a second time. Downward swipes still close
 only on a non-cancelled finish. **Restore original** restores the saved input bindings without
 changing your trackpad values or uninstalling either provider.
-To enable opening during the swipe on an existing installation, press **Apply gestures** once
-after upgrading; you can keep the same gesture values.
+After upgrading, press **Apply gestures** once to keep your gesture values and
+add the overview-only rule that disables the compositor fade. The workspace strip
+still slides down. The companion preloads and retains a bounded wallpaper image
+between openings; window previews are released on close. If wallpaper loading
+fails or exceeds one second, a stable theme-colored fallback is shown for that opening.
+
+### Overview inspiration: HyMission
+
+We learned from [HyMission](https://github.com/gfhdhytghd/hymission), created by
+[gfhdhytghd](https://github.com/gfhdhytghd), particularly its Mission Control-style
+workspace strip and trackpad gestures. Thank you to its contributors for making
+that work available to study.
+
+Trackpad Plus's built-in overview is implemented here as a separate Quickshell
+companion. HyMission remains a separately maintained, optional provider with its
+own [GPL-3.0 license](https://github.com/gfhdhytghd/hymission/blob/master/LICENSE).
+You do not need to install it to use the **Trackpad Plus** overview provider.
 
 ### Optional HyMission provider
 
 [HyMission](https://github.com/gfhdhytghd/hymission) is an **optional runtime
-dependency** for the Mission Control-style overview. It renders the overview
+dependency only when you select HyMission** as the overview provider. It renders the overview
 inside Hyprland; Trackpad Plus configures the gestures. HyMission is separately
 installed and maintained, and is not bundled with Trackpad Plus. Horizontal
 workspace swiping works without it.
@@ -194,8 +230,9 @@ your original settings. Your pointer and scrolling settings are independent.
 
 <img src="assets/screenshots/device-scale.png" alt="Annotated screenshot pointing from the gear beside Apple to the Device scale setting, set to 1.00" width="340">
 
-Click the **gear beside the trackpad name** to reveal **Device scale**. Click it
-again to close the setting. This adapts the available range to the selected
+Click the **gear beside the trackpad name** to reveal **Enable trackpad** and
+**Device scale**. Click it again to close the settings. The annotated image above
+shows the scale control before Enable trackpad moved into this menu. This adapts the available range to the selected
 trackpad's sensitivity. It defaults to **1×** and accepts **0.10–10.00×**.
 There is no automatic Apple/PC multiplier.
 
@@ -320,6 +357,12 @@ the entire graph, with no initial constant-gain region. Scrolling is tuned
 separately to 0.10×. To reproduce this setup, keep Device scale at 1.00, set
 Scroll Speed to 0.10, choose Custom, enter the four curve values, and press
 **Apply & try**. Set the toggles as listed above.
+
+The new Gestures screenshot shows **3 fingers**, **Swipe distance 200**,
+**Workspace swipe** on, **Reverse direction** off, and **Trackpad Plus** selected
+with **Swipe up for overview** on. To use that setup, first select **Test overview**,
+then press **Apply gestures**. These gesture values apply across trackpads and
+are separate from the per-device settings in the table.
 
 ## Install and upgrade
 
