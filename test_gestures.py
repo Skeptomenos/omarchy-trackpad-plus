@@ -144,7 +144,6 @@ class GestureTests(unittest.TestCase):
         with patch('platform.machine', return_value='aarch64'):
             g.change(settings)
         source = g.INPUT.read_text()
-        self.assertIn('"version": 5', source)
         self.assertEqual(g.parse(source)[2], settings)
         self.assertNotIn('hl.plugin.hymission', source)
         lua = ('local native, commands = {}, {}\n'
@@ -154,15 +153,14 @@ class GestureTests(unittest.TestCase):
                '\nassert(native[2].direction == "up" and native[3].direction == "down")'
                '\nassert(#commands == 0 and type(native[2].action) == "table")'
                '\nnative[2].action.start({})'
-               '\nassert(#commands == 1 and commands[1] == ' + json.dumps(g.COMPANION_COMMAND + 'start') + ')'
-               '\nnative[2].action.finish({cancelled=true})\nnative[3].action.finish({cancelled=true})'
-               '\nassert(#commands == 1, "cancelled gesture must not open or close")'
-               '\nnative[2].action.start({})\nnative[2].action.finish({cancelled=false})'
-               '\nassert(#commands == 3 and commands[2] == ' + json.dumps(g.COMPANION_COMMAND + 'start') + ')'
-               '\nassert(commands[3] == ' + json.dumps(g.COMPANION_COMMAND + 'open') + ')'
+               '\nassert(#commands == 1 and commands[1] == ' + json.dumps(g.COMPANION_COMMAND + 'open') + ', "up must open before finger release")'
+               '\nassert(native[2].action.finish == nil and native[2].action.update == nil, "up must not reopen or cancel at release")'
+               '\nnative[3].action.finish({cancelled=true})'
+               '\nassert(#commands == 1, "cancelled down must not close")'
                '\nassert(native[3].action.start == nil)\nnative[3].action.finish({cancelled=false})'
-               '\nassert(#commands == 4 and commands[4] == ' + json.dumps(g.COMPANION_COMMAND + 'close') + ')')
+               '\nassert(#commands == 2 and commands[2] == ' + json.dumps(g.COMPANION_COMMAND + 'close') + ')')
         subprocess.run(['lua', '-'], input=lua, text=True, capture_output=True, check=True)
+        self.assertIn('"version": 6', source)
         g.restore()
         self.assertEqual(g.INPUT.read_text(), INPUT)
 
@@ -184,7 +182,7 @@ hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert 
             self.assertEqual(g.INPUT.read_text(), historical)
             if mode == 'migrate':
                 g.change(parsed[2])
-                self.assertIn('"version": 5', g.INPUT.read_text())
+                self.assertIn('"version": 6', g.INPUT.read_text())
                 self.assertEqual(g.parse(g.INPUT.read_text())[3], BINDING + '\n')
             elif mode == 'failed-migration':
                 with patch.object(g, 'reload_checked', side_effect=[RuntimeError('unsupported callback API'), None]):
@@ -194,6 +192,30 @@ hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert 
                 self.assertFalse(g.JOURNAL.exists())
             g.restore()
             self.assertEqual(g.INPUT.read_text(), INPUT)
+
+    def test_schema_five_literal_preserved_until_explicit_edit(self):
+        fixture = r'''-- BEGIN Trackpad Plus gestures
+-- {"original": "", "separator": "", "settings": {"distance": 300, "enabled": true, "fingers": 3, "invert": false, "overview": true, "overview_provider": "trackpad-plus"}, "version": 5}
+hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+hl.gesture({ fingers = 3, direction = "up", action = { start = function() hl.exec_cmd("python3 -B \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus/overview-control.py\" start") end, finish = function(event) if not event.cancelled then hl.exec_cmd("python3 -B \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus/overview-control.py\" open") end end } })
+hl.gesture({ fingers = 3, direction = "down", action = { finish = function(event) if not event.cancelled then hl.exec_cmd("python3 -B \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus/overview-control.py\" close") end end } })
+hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert = false } })
+-- END Trackpad Plus gestures
+'''
+        g.INPUT.write_text(fixture)
+        settings = g.parse(fixture)[2]
+        self.assertEqual(g.block(settings, '', version=5), fixture)
+        self.assertTrue(g.inspect(fixture)['can_restore'])
+        self.assertEqual(g.INPUT.read_text(), fixture)
+        with patch.object(g, 'reload_checked', side_effect=[RuntimeError('failed reload'), None]):
+            with self.assertRaisesRegex(RuntimeError, 'failed reload'):
+                g.change(settings)
+        self.assertEqual(g.INPUT.read_text(), fixture)
+        g.change(settings)
+        self.assertIn('"version": 6', g.INPUT.read_text())
+        self.assertEqual(g.parse(g.INPUT.read_text())[2], settings)
+        g.restore()
+        self.assertEqual(g.INPUT.read_text(), '')
 
     def test_companion_callbacks_preserve_spaces_without_shell_injection(self):
         source = g.COMPANION_COMMAND + 'open'

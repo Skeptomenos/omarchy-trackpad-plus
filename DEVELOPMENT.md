@@ -36,8 +36,9 @@ This release identifier is separate from the backend's settings schema version.
   adoption of literal bindings in input.lua, marked-block persistence and
   compare-before-restore recovery. Uses the existing bounded subprocesses,
   secure file writes, and state lock; never mixes gestures into device settings.
-  Managed block schema 5 adds hidden companion prewarming through Hyprland's
-  gesture-start callback and cancellation-aware finish callbacks. Schemas 2–4
+  Managed block schema 6 opens the overview on upward gesture recognition;
+  there is no upward finish callback to reopen or undo it. Downward finish
+  retains cancellation handling. Schemas 2–5
   remain readable and restorable; legacy overview maps to HyMission, and
   only an explicit edit upgrades the block. Provider detection must not start
   capture or replace the user's selection. HyMission's architecture guard applies
@@ -205,14 +206,17 @@ Cold open to a rendered preview: **337 ms**. First 30 warm opens: median
 Quickshell 0.3.1 session, not a portability or performance guarantee. A release
 performance envelope has not yet been agreed; the feature remains experimental.
 
-For the desktop-strip layout, alternating temporary builds (12 warm opens each)
+For the initial schema-5 desktop-strip layout, alternating temporary builds (12 warm opens each)
 measured median first-preview time of **174 ms** with the initial 30 ms capture
 timer and **162 ms** with a coalesced next-event-turn kickoff. Both retain the
 two-capture limit. These timings include controller/status IPC, can identify a
 thumbnail as the first preview, and exclude physical gesture recognition and
 completion of the 260 ms entrance animation. Gesture-start prewarming overlaps
 the cold companion startup with finger movement; it never opens a view or
-captures windows until a non-cancelled finish requests opening.
+captures windows until a non-cancelled finish requests opening. Schema 6 replaces
+that release-to-open behavior with opening on recognition, so the gesture's
+remaining travel can overlap both startup and rendering. Its physical latency
+has not been measured; the earlier prewarm measurements describe schema 5.
 
 A subsequent 100-cycle run of the desktop-strip layout passed current, inactive,
 and fullscreen fixture-pixel checks, one-click workspace entry, focus restoration,

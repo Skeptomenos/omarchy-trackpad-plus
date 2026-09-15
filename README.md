@@ -122,14 +122,15 @@ images and window titles are not written to files, logs, or network services.
 Capture is limited to visible thumbnails and the current window page, with two simultaneous requests and a
 per-card deadline. Large source windows can still require large graphics buffers.
 
-Gesture block schemas 2, 3, and 4 remain readable and restorable. An explicit edit
-writes schema 5 with the selected provider; this is separate from the pointer
+Gesture block schemas 2–5 remain readable and restorable. An explicit edit
+writes schema 6 with the selected provider; this is separate from the pointer
 settings schema. With Trackpad Plus selected, Hyprland 0.56.2 gesture callbacks
-start the hidden companion while an upward swipe is in progress, then open it
-only when the gesture finishes without cancellation. Cancelled swipes never open
-or close the overview. **Restore original** restores the saved input bindings without
+open the overview as soon as the upward swipe is recognized, without waiting for
+finger release. Reversing or cancelling the swipe afterward does not undo the
+opening, and release never opens it a second time. Downward swipes still close
+only on a non-cancelled finish. **Restore original** restores the saved input bindings without
 changing your trackpad values or uninstalling either provider.
-To enable prewarming on an existing installation, press **Apply gestures** once
+To enable opening during the swipe on an existing installation, press **Apply gestures** once
 after upgrading; you can keep the same gesture values.
 
 ### Optional HyMission provider

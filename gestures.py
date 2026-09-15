@@ -171,7 +171,7 @@ def find_binding(source):
 
 def block(settings, original, separator='', version=3):
     validate(settings)
-    if version in (4, 5):
+    if version in (4, 5, 6):
         settings = dict(normalized(settings), overview_provider=overview_provider(settings))
     elif version == 3 and 'overview_provider' not in settings:
         settings = normalized(settings)
@@ -191,7 +191,11 @@ def block(settings, original, separator='', version=3):
             lines.append(horizontal)
         for direction, operation in [('up', 'open'), ('down', 'close')]:
             command = json.dumps(COMPANION_COMMAND + operation)
-            if version >= 5:
+            if version >= 6 and direction == 'up':
+                # Recognition commits the opening; never wait for finger lift
+                # or issue a second open at finish after the user dismisses it.
+                action = '{ start = function() hl.exec_cmd(%s) end }' % command
+            elif version >= 5:
                 # Hyprland 0.56.2 starts the hidden companion while the finger is
                 # moving; only a completed, non-cancelled gesture may show it.
                 callbacks = []
@@ -243,7 +247,7 @@ def parse(source):
         try:
             data = json.loads(fragment.splitlines()[1][3:])
             if (set(data) != {'version', 'settings', 'original', 'separator'}
-                    or type(data['version']) is not int or data['version'] not in (2, 3, 4, 5)
+                    or type(data['version']) is not int or data['version'] not in (2, 3, 4, 5, 6)
                     or not isinstance(data['original'], str)):
                 raise ValueError('Unsupported gesture block version')
             if fragment != block(data['settings'], data['original'], data['separator'], data['version']):
@@ -381,7 +385,7 @@ def change(settings):
     if not status['can_edit']:
         raise ValueError(status['message'])
     managed = parse(before)
-    # Only an explicit edit emits schema 5. An older caller editing a managed
+    # Only an explicit edit emits schema 6. An older caller editing a managed
     # block retains its current provider instead of silently reverting it.
     settings['overview_provider'] = settings.get('overview_provider', overview_provider(managed[2]) if managed else 'hymission')
     if settings['overview']:
@@ -412,7 +416,7 @@ def change(settings):
             if fields['direction'] in ('vertical', 'up', 'down', 'swipe'):
                 raise ValueError('An existing vertical gesture conflicts with overview; manage it in your Hyprland config')
     separator = '\n' if base and not base.endswith('\n') else ''
-    after = base + separator + block(settings, original, separator, version=5)
+    after = base + separator + block(settings, original, separator, version=6)
     # Validate the complete result before writing; appending to dynamic Lua is unsafe.
     parse(after)
     transact(before, after, expected=settings)
