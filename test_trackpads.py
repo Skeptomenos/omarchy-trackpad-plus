@@ -628,4 +628,48 @@ class TrackpadTests(unittest.TestCase):
                 m.save(state)
             write.assert_not_called()
 
+    def test_progressive_scroll_emits_curve_not_identity(self):
+        state = m.migrate(self.state)
+        curve = dict(m.DEFAULT_SCROLL_CURVE)
+        with patch.object(m, 'hypr') as run, patch.object(m, 'save'):
+            updated = m.change(state, 'apple', 'scroll_feel', {'profile': 'mac', 'curve': curve})
+        settings = updated['devices']['apple']['settings']
+        self.assertTrue(settings['scroll_progressive'])
+        self.assertEqual(settings['accel_profile'], 'custom')
+        self.assertEqual(settings['scroll_curve_preset'], 'mac')
+        lua = run.call_args.args[1]
+        self.assertIn('scroll_points = "' + m.scroll_profile(curve), lua)
+        self.assertNotIn(f'scroll_points = "{m.IDENTITY_SCROLL}"', lua)
+        self.assertNotIn('scroll_progressive', lua)
+        self.assertNotIn('scroll_curve =', lua)
+        self.assertEqual(updated['devices']['dell'], state['devices']['dell'])
+
+    def test_progressive_toggle_switches_adaptive_pointer_to_mac(self):
+        state = m.migrate(self.state)
+        with patch.object(m, 'hypr') as run, patch.object(m, 'save'):
+            updated = m.change(state, 'apple', 'scroll_progressive', True)
+        settings = updated['devices']['apple']['settings']
+        self.assertTrue(settings['scroll_progressive'])
+        self.assertEqual(settings['accel_profile'], 'custom')
+        self.assertEqual(settings['curve_preset'], 'mac')
+        self.assertIn('scroll_points = "' + m.scroll_profile(settings['scroll_curve']), run.call_args.args[1])
+
+    def test_system_pointer_turns_off_progressive_scroll(self):
+        state = m.migrate(self.state)
+        with patch.object(m, 'hypr'), patch.object(m, 'save'):
+            enabled = m.change(state, 'apple', 'scroll_progressive', True)
+            updated = m.change(enabled, 'apple', 'pointer_feel',
+                               {'profile': 'adaptive', 'curve': m.DEFAULT_CURVE})
+        self.assertFalse(updated['devices']['apple']['settings']['scroll_progressive'])
+        lua = m.lua_for({'apple': updated['devices']['apple']})
+        self.assertIn('accel_profile = "adaptive"', lua)
+        self.assertNotIn('scroll_points', lua)
+
+    def test_scroll_defaults_match_curve_js(self):
+        script = "const c=require('./Curve.js'); console.log(JSON.stringify([c.scrollDefaults(), c.points(c.scrollDefaults())]))"
+        defaults, graph = json.loads(subprocess.check_output(
+            ['node', '-e', script], cwd=Path(__file__).parent))
+        self.assertEqual(defaults, m.DEFAULT_SCROLL_CURVE)
+        self.assertEqual(graph, list(map(float, m.scroll_profile(m.DEFAULT_SCROLL_CURVE).split()[1:])))
+
 if __name__=='__main__':unittest.main()

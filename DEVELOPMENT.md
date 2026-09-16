@@ -28,7 +28,8 @@ This release identifier is separate from the backend's settings schema version.
 - `Panel.qml`: Omarchy bar widget, device selection, debounced action queue,
   deadlines, and rejection of stale reads.
 - `CurveEditor.qml` / `Curve.js`: draft curve editing, spinners, presets, and
-  target practice. Only Apply changes the live profile.
+  target practice. Pointer and scroll modes share the editor; only Apply
+  changes the live profile. Keep sampled curves in sync with `trackpads.py`.
 - `trackpads.py`: device discovery, validation, file locking, persistence, and
   per-device `hl.device` updates. The libinput validator creates configuration
   objects without opening devices. Keep its sampled curve in sync with Curve.js.

@@ -34,7 +34,10 @@ gestures apply across trackpads.
   configure tapping, typing protection, and two-finger right click. System and
   Flat profiles also expose **Pointer Speed**.
 - **Scrolling:** adjust **Scroll Speed** and **Natural Scrolling** independently
-  of the pointer curve.
+  of the pointer curve. Optional **Progressive Scrolling** applies a separate
+  acceleration curve so slow swipes stay precise and faster flicks cover more
+  distance. It requires a custom pointer profile (Mac-inspired or Custom);
+  turning it on from System or Flat switches pointer feel to Mac-inspired.
 - **Gestures:** configure horizontal workspace swipes and an optional upward
   swipe for the workspace overview. Test the overview before applying gestures.
 
@@ -43,8 +46,9 @@ gestures apply across trackpads.
 - Enable or disable the selected trackpad.
 - Scroll speed (0.01–1.00, in 0.01 steps) with a per-device scale, and pointer speed (−1.0–1.0).
 - Pointer feel: System (adaptive), Flat, Mac-inspired, and Custom profiles.
+- Progressive scrolling with a Mac-inspired or Custom scroll acceleration curve.
 - Visual acceleration editor with draggable precision, acceleration start/end, and fast-swipe
-  handles, keyboard adjustment, target practice, and Restore previous.
+  handles, keyboard adjustment, target practice (pointer only), and Restore previous.
 - Natural scrolling, tap to click, disable while typing, and clickfinger behavior.
 - Keyboard navigation through device selection, sliders, and switches.
 
@@ -54,8 +58,8 @@ that trackpad on or off. **Natural Scrolling** controls scroll direction;
 reduces accidental input while typing; **Two-Finger Right Click** enables a
 secondary click by pressing with two fingers.
 
-The sliders and toggles save as you use them. Pointer-curve edits stay in
-preview until you press **Apply & try**.
+The sliders and toggles save as you use them. Pointer-curve and scroll-curve
+edits stay in preview until you press **Apply & try**.
 
 The footer shows the installed version, starting with **2026.09.13.0**. Releases
 use **YYYY.MM.DD.N**: release date followed by a revision starting at 0 and
@@ -359,7 +363,9 @@ Each custom curve is validated with the installed libinput library before it
 is applied or saved. Libinput accepts at most 64 points; Hyprland 0.56 does not
 report point-validation failures through `hyprctl eval`, so the compositor's
 response alone is insufficient. Custom profiles use an identity scroll curve
-before the separate scroll multiplier. Legacy three-handle curves preserve
+before the separate scroll multiplier, unless **Progressive Scrolling** is on.
+Then the same sampling writes a `scroll_points` curve independently of the
+pointer curve. Legacy three-handle curves preserve
 their intended shape during migration and appear as Custom.
 
 </details>

@@ -15,6 +15,8 @@ FocusScope {
   property var saved: ({ profile: "adaptive", curve: Curve.defaults() })
   property var draft: Curve.copy(saved)
   property string deviceLabel: "Trackpad"
+  property string kind: "pointer"
+  readonly property bool scrollMode: kind === "scroll"
   property bool busy: false
   property string settingsError: ""
   property bool canRestore: false
@@ -36,7 +38,8 @@ FocusScope {
     hits = 0
   }
   function choose(profile) {
-    draft = { profile: profile, curve: profile === "mac" ? Curve.presetForScale(gainMaximum) : Curve.copy(draft.curve) }
+    var preset = editor.scrollMode ? Curve.scrollPresetForScale(gainMaximum) : Curve.presetForScale(gainMaximum)
+    draft = { profile: profile, curve: profile === "mac" ? preset : Curve.copy(draft.curve) }
   }
   function adjust(handle, value, precise) {
     draft = { profile: "custom", curve: Curve.adjust(draft.curve, handle, value, precise, gainMaximum) }
@@ -177,7 +180,7 @@ FocusScope {
       Action { id: backButton; text: "‹ Back"; width: 70 * editor.uiScale; onClicked: editor.backRequested() }
       Column {
         width: parent.width - backButton.width - parent.spacing
-        Label { text: "Pointer feel"; font.pixelSize: 18 * editor.uiScale; font.bold: true }
+        Label { text: editor.scrollMode ? "Scroll acceleration" : "Pointer feel"; font.pixelSize: 18 * editor.uiScale; font.bold: true }
         Label { text: editor.deviceLabel; opacity: 0.65; width: parent.width; elide: Text.ElideRight; wrapMode: Text.NoWrap }
       }
     }
@@ -186,10 +189,14 @@ FocusScope {
       width: parent.width
       spacing: 5 * editor.uiScale
       Repeater {
-        model: [{ id: "adaptive", name: "System" }, { id: "mac", name: "Mac-inspired" }, { id: "flat", name: "Flat" }, { id: "custom", name: "Custom" }]
+        model: editor.scrollMode
+          ? [{ id: "mac", name: "Mac-inspired" }, { id: "custom", name: "Custom" }]
+          : [{ id: "adaptive", name: "System" }, { id: "mac", name: "Mac-inspired" }, { id: "flat", name: "Flat" }, { id: "custom", name: "Custom" }]
         Action {
           required property var modelData
-          width: (contents.width - 15 * editor.uiScale) * (modelData.id === "mac" ? 1.4 : 1) / 4.4
+          width: editor.scrollMode
+            ? (contents.width - 5 * editor.uiScale) * (modelData.id === "mac" ? 1.4 : 1) / 2.4
+            : (contents.width - 15 * editor.uiScale) * (modelData.id === "mac" ? 1.4 : 1) / 4.4
           text: modelData.name
           selected: editor.draft.profile === modelData.id
           onClicked: editor.choose(modelData.id)
@@ -199,7 +206,8 @@ FocusScope {
 
     Label {
       width: parent.width
-      text: editor.custom ? "A steady precision range for small corrections, then a smooth rise for faster swipes."
+      text: editor.scrollMode ? "Slow two-finger swipes stay precise; faster flicks cover more distance, like macOS."
+        : editor.custom ? "A steady precision range for small corrections, then a smooth rise for faster swipes."
         : editor.draft.profile === "flat" ? "Constant response at every finger speed. Use Pointer Speed in the main panel to adjust it."
         : "Use libinput’s adaptive response and your existing Pointer Speed setting."
     }
@@ -208,7 +216,7 @@ FocusScope {
       width: parent.width
       spacing: 6 * editor.uiScale
       visible: editor.custom
-      Label { text: "Cursor travel (×)"; opacity: 0.7; font.pixelSize: 11 * editor.uiScale }
+      Label { text: editor.scrollMode ? "Scroll travel (×)" : "Cursor travel (×)"; opacity: 0.7; font.pixelSize: 11 * editor.uiScale }
       Item {
         id: plot
         objectName: "curvePlot"
@@ -342,7 +350,8 @@ FocusScope {
 
     Label {
       width: parent.width
-      text: editor.draft.profile === "mac" ? "An experimental starting point inspired by Mac tracking; tune it to your hand."
+      text: editor.scrollMode && editor.draft.profile === "mac" ? "A starting curve inspired by macOS progressive scrolling. Apply, then flick vs creep to compare."
+        : editor.draft.profile === "mac" ? "An experimental starting point inspired by Mac tracking; tune it to your hand."
         : editor.custom ? "Click a number and use ↑/↓; hold Shift for 10× steps. Type an exact value or drag the handles. Apply when ready."
         : "Choose Custom to edit a curve."
       opacity: 0.65
@@ -379,6 +388,7 @@ FocusScope {
 
     Rectangle {
       id: practice
+      visible: !editor.scrollMode
       width: parent.width
       height: 100 * editor.uiScale
       radius: 6 * editor.uiScale
