@@ -1,0 +1,81 @@
+#!/bin/bash
+# Manage libinput palm rejection for Trackpad Plus.
+# Same template covers Apple SPI (omarchy12) and Apple MTP (omarchy-air).
+# Writing /etc needs privilege; reading and staging do not.
+#
+# usage: palm-settings get|set <threshold>|install|status
+#   get       staged threshold (100-1600, lower is stronger)
+#   set N     stage threshold N for both device stanzas
+#   install   copy staged file to /etc (prompts for privilege), then reboot
+#   status    compare staged, installed, and active thresholds
+
+set -euo pipefail
+export LC_ALL=C
+
+HERE="$(dirname "$(readlink -f "$0")")"
+TEMPLATE="${PALM_TEMPLATE:-$HERE/local-overrides.quirks}"
+DEST="${PALM_DEST:-/etc/libinput/local-overrides.quirks}"
+
+usage() {
+  echo "usage: palm-settings get|set <100-1600>|install|status" >&2
+  exit 64
+}
+
+staged() {
+  grep -m1 -oP '^AttrPalmSizeThreshold=\K[0-9]+' "$TEMPLATE"
+}
+
+touchpad_event() {
+  local ev
+  for ev in /dev/input/event*; do
+    if udevadm info --query=property --name="$ev" 2>/dev/null | grep -q '^ID_INPUT_TOUCHPAD=1$'; then
+      echo "$ev"
+      return 0
+    fi
+  done
+  return 1
+}
+
+active() {
+  local dev
+  dev=$(touchpad_event) || return 0
+  command -v libinput >/dev/null || return 0
+  libinput quirks list "$dev" 2>/dev/null | grep -m1 -oP '^AttrPalmSizeThreshold=\K[0-9]+' || true
+}
+
+case "${1:-}" in
+get)
+  staged
+  ;;
+set)
+  threshold="${2:-}"
+  [[ $threshold =~ ^[0-9]+$ ]] || usage
+  if (( threshold < 100 || threshold > 1600 )); then
+    echo "threshold must be 100-1600" >&2
+    exit 64
+  fi
+  sed -i -E "s/^(AttrPalmSizeThreshold=)[0-9]+/\1$threshold/" "$TEMPLATE"
+  staged
+  ;;
+install)
+  if [[ -t 0 ]]; then
+    sudo install -m 644 "$TEMPLATE" "$DEST"
+  else
+    pkexec install -m 644 "$TEMPLATE" "$DEST"
+  fi
+  echo "installed; reboot to activate (internal trackpads re-read quirks only at init)"
+  ;;
+status)
+  echo "staged=$(staged)"
+  if [[ -f $DEST ]]; then
+    echo "installed=$(grep -m1 -oP '^AttrPalmSizeThreshold=\K[0-9]+' "$DEST")"
+  else
+    echo "installed=missing"
+  fi
+  active_value=$(active)
+  echo "active=${active_value:-unknown}"
+  ;;
+*)
+  usage
+  ;;
+esac

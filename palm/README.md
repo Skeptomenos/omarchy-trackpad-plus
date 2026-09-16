@@ -12,6 +12,18 @@ Stock Apple threshold is `1600`. Template uses `1000`.
 Lower is stronger. Use `800` if palms still slip.
 Use `1200` if real edge touches get eaten.
 
+## Manage with palm-settings
+
+```bash
+palm/palm-settings get            # staged threshold
+palm/palm-settings set 800        # stage 800 for both stanzas (100-1600)
+palm/palm-settings status         # staged vs installed vs active
+palm/palm-settings install        # copy to /etc (sudo in terminal, pkexec from UI)
+```
+
+`install` uses `sudo` in a terminal and `pkexec` from a graphical caller.
+Reboot after install. Internal trackpads re-read quirks only at init.
+
 ## Install
 
 ```bash
