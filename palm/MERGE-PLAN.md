@@ -16,6 +16,7 @@ Context: Upstream `d6d35e1` synced 2026-09-16. Upstream has DWT toggle but no pa
 - 2026-09-16: Fork synced to upstream `d6d35e1` and pushed. Branch `palm-mac-merge` cut. Plan written. Next: add `palm/` scaffold.
 - 2026-09-16: Palm scaffold merged (`palm/` template, README, test). Mac gestures ported: `fullscreen_up` plus `scratchpad_down`, schema 8, editor toggles, 8 new tests. Full Python suite passes (104). qmllint clean. qmltestrunner not installed locally.
 - 2026-09-17: Live check on omarchy12 passed. Horizontal swipe, up fullscreen, down scratchpad all work. Down needs a window in scratchpad; empty scratchpad shows nothing. That is Hyprland drag-threshold behavior, not a bug.
+- 2026-09-17: Air rollout staged. Quirks file copied to `omarchy-air:/tmp/local-overrides.quirks`. No passwordless sudo on air. Awaiting user install plus reboot, then palm test while typing.
 
 ## Decision Log (LIVING)
 
