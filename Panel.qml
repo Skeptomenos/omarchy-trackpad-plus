@@ -231,9 +231,11 @@ Panel {
   property int palmThreshold: 1000
   property int pendingPalmThreshold: 1000
   property string palmInstalled: "missing"
-  property string palmActive: "unknown"
   property string palmError: ""
   property string palmPendingOp: ""
+  property string palmLastOp: ""
+  property bool palmJustInstalled: false
+  property bool palmInstallPending: false
 
   function palmStrengthLabel(v) {
     if (v > 1500) return "Stock"
@@ -245,9 +247,9 @@ Panel {
 
   function palmStatusText() {
     if (palmInstalled === "missing") return "Not installed in /etc. Lower is stronger; 1000 is tested on both Macs."
-    if (palmActive === "unknown") return "Installed " + palmInstalled + ". Install libinput-tools for live status."
-    if (palmInstalled !== palmActive) return "Installed " + palmInstalled + " · active " + palmActive + ". Reboot to activate."
-    return "Active " + palmActive + ". Lower is stronger; 1000 is tested on both Macs."
+    if (palmThreshold !== parseInt(palmInstalled, 10)) return "Staged " + palmThreshold + " · installed " + palmInstalled + ". Press Install, then reboot."
+    if (palmJustInstalled) return "Installed " + palmInstalled + ". Reboot to activate."
+    return "Installed " + palmInstalled + ". Reboot after changes to activate."
   }
 
   function setPalmThreshold(v) {
@@ -267,25 +269,28 @@ Panel {
   function runPalmAction(args, after, seconds) {
     if (palmProc.running) return
     palmPendingOp = after || ""
+    palmLastOp = args[0] || ""
     palmError = ""
     palmProc.command = bounded(seconds || 15, ["bash", palmBackend].concat(args))
     palmProc.running = true
   }
 
   function refreshPalmStatus() { runPalmAction(["status"]) }
-  function installPalmQuirks() { runPalmAction(["install"], "status", 120) }
+  function installPalmQuirks() {
+    palmInstallPending = true
+    runPalmAction(["install"], "status", 120)
+  }
 
   function receivePalm(raw) {
     try {
       var lines = String(raw).trim().split("\n")
       for (var i = 0; i < lines.length; i++) {
-        var m = /^(staged|installed|active)=(.*)$/.exec(lines[i])
+        var m = /^(staged|installed)=(.*)$/.exec(lines[i])
         if (!m) continue
         if (m[1] === "staged") {
           var n = parseInt(m[2], 10)
           if (isFinite(n)) { palmThreshold = n; pendingPalmThreshold = n }
         } else if (m[1] === "installed") palmInstalled = m[2]
-        else if (m[1] === "active") palmActive = m[2]
       }
     } catch (error) { palmError = "Could not read palm status" }
     var after = palmPendingOp
@@ -295,6 +300,9 @@ Panel {
 
   function finishPalm(code) {
     if (code !== 0 && !palmError) palmError = "Palm update failed (code " + code + ")"
+    else if (code === 0 && palmLastOp === "install" && palmInstallPending) palmJustInstalled = true
+    if (palmLastOp === "install") palmInstallPending = false
+    palmLastOp = ""
   }
 
   // ---- Cursor navigation ----
@@ -558,6 +566,7 @@ Panel {
     if (opened) {
       editingCurve = false
       refresh()
+      palmJustInstalled = false
       refreshPalmStatus()
       if (activeTab === "gestures") refreshGestures()
       focusSection = "device"

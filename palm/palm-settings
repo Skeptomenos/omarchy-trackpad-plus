@@ -6,8 +6,8 @@
 # usage: palm-settings get|set <threshold>|install|status
 #   get       staged threshold (100-1600, lower is stronger)
 #   set N     stage threshold N for both device stanzas
-#   install   copy staged file to /etc (prompts for privilege), then reboot
-#   status    compare staged, installed, and active thresholds
+#   install   copy staged file to /etc (prompts for privilege); reboot applies it
+#   status    compare staged and installed thresholds
 
 set -euo pipefail
 export LC_ALL=C
@@ -23,24 +23,6 @@ usage() {
 
 staged() {
   grep -m1 -oP '^AttrPalmSizeThreshold=\K[0-9]+' "$TEMPLATE"
-}
-
-touchpad_event() {
-  local ev
-  for ev in /dev/input/event*; do
-    if udevadm info --query=property --name="$ev" 2>/dev/null | grep -q '^ID_INPUT_TOUCHPAD=1$'; then
-      echo "$ev"
-      return 0
-    fi
-  done
-  return 1
-}
-
-active() {
-  local dev
-  dev=$(touchpad_event) || return 0
-  command -v libinput >/dev/null || return 0
-  libinput quirks list "$dev" 2>/dev/null | grep -m1 -oP '^AttrPalmSizeThreshold=\K[0-9]+' || true
 }
 
 case "${1:-}" in
@@ -72,8 +54,6 @@ status)
   else
     echo "installed=missing"
   fi
-  active_value=$(active)
-  echo "active=${active_value:-unknown}"
   ;;
 *)
   usage
