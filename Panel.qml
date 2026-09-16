@@ -226,6 +226,77 @@ Panel {
       overviewPreviewText = "Overview did not respond in time. Pointer controls and workspace swipes are unchanged."
   }
 
+  // ---- Palm rejection (system libinput quirks, not per-device) ----
+  readonly property string palmBackend: decodeURIComponent(String(Qt.resolvedUrl("palm/palm-settings")).replace(/^file:\/\//, ""))
+  property int palmThreshold: 1000
+  property int pendingPalmThreshold: 1000
+  property string palmInstalled: "missing"
+  property string palmActive: "unknown"
+  property string palmError: ""
+  property string palmPendingOp: ""
+
+  function palmStrengthLabel(v) {
+    if (v > 1500) return "Stock"
+    if (v > 1200) return "Gentle"
+    if (v > 900) return "Balanced"
+    if (v > 500) return "Strong"
+    return "Very strong"
+  }
+
+  function palmStatusText() {
+    if (palmInstalled === "missing") return "Not installed in /etc. Lower is stronger; 1000 is tested on both Macs."
+    if (palmActive === "unknown") return "Installed " + palmInstalled + ". Install libinput-tools for live status."
+    if (palmInstalled !== palmActive) return "Installed " + palmInstalled + " · active " + palmActive + ". Reboot to activate."
+    return "Active " + palmActive + ". Lower is stronger; 1000 is tested on both Macs."
+  }
+
+  function setPalmThreshold(v) {
+    pendingPalmThreshold = Math.max(100, Math.min(1600, Math.round(v / 50) * 50))
+  }
+
+  function commitPalmThreshold() {
+    if (pendingPalmThreshold === palmThreshold) return
+    runPalmAction(["set", String(pendingPalmThreshold)], "status", 15)
+  }
+
+  function adjustPalmThreshold(delta) {
+    setPalmThreshold(pendingPalmThreshold + delta)
+    commitPalmThreshold()
+  }
+
+  function runPalmAction(args, after, seconds) {
+    if (palmProc.running) return
+    palmPendingOp = after || ""
+    palmError = ""
+    palmProc.command = bounded(seconds || 15, ["bash", palmBackend].concat(args))
+    palmProc.running = true
+  }
+
+  function refreshPalmStatus() { runPalmAction(["status"]) }
+  function installPalmQuirks() { runPalmAction(["install"], "status", 120) }
+
+  function receivePalm(raw) {
+    try {
+      var lines = String(raw).trim().split("\n")
+      for (var i = 0; i < lines.length; i++) {
+        var m = /^(staged|installed|active)=(.*)$/.exec(lines[i])
+        if (!m) continue
+        if (m[1] === "staged") {
+          var n = parseInt(m[2], 10)
+          if (isFinite(n)) { palmThreshold = n; pendingPalmThreshold = n }
+        } else if (m[1] === "installed") palmInstalled = m[2]
+        else if (m[1] === "active") palmActive = m[2]
+      }
+    } catch (error) { palmError = "Could not read palm status" }
+    var after = palmPendingOp
+    palmPendingOp = ""
+    if (after === "status") runPalmAction(["status"])
+  }
+
+  function finishPalm(code) {
+    if (code !== 0 && !palmError) palmError = "Palm update failed (code " + code + ")"
+  }
+
   // ---- Cursor navigation ----
   property string activeTab: "pointer"
   property string focusSection: "device"
@@ -240,12 +311,13 @@ Panel {
     if (activeTab === "scrolling") return sections.concat(["scroll", "natural"])
     if (activeTab === "gestures") return sections
     if (pointerFeel.profile !== "mac" && pointerFeel.profile !== "custom") sections.push("pointer")
-    return sections.concat(["acceleration", "tap", "typing", "clickfinger"])
+    return sections.concat(["acceleration", "tap", "typing", "clickfinger", "palm"])
   }
 
   function changeTab(tab) {
     if (["pointer", "scrolling", "gestures"].indexOf(tab) < 0) return
     selectDevice(selectedDevice) // Commit pending slider edits before hiding them.
+    commitPalmThreshold()
     activeTab = tab
     focusSection = "tabs"
     keyCatcher.forceActiveFocus()
@@ -300,6 +372,8 @@ Panel {
       adjustScrollFactor(delta > 0 ? 0.01 : -0.01)
     } else if (focusSection === "pointer") {
       adjustPointerSpeed(delta > 0 ? 0.1 : -0.1)
+    } else if (focusSection === "palm") {
+      adjustPalmThreshold(delta > 0 ? 50 : -50)
     }
   }
 
@@ -484,6 +558,7 @@ Panel {
     if (opened) {
       editingCurve = false
       refresh()
+      refreshPalmStatus()
       if (activeTab === "gestures") refreshGestures()
       focusSection = "device"
       cursorActive = false
@@ -572,6 +647,17 @@ Panel {
     onExited: function(code, status) {
       var request = requestId
       Qt.callLater(function() { root.finishOverview(code, request) })
+    }
+  }
+
+  Process {
+    id: palmProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.receivePalm(String(text))
+    }
+    onExited: function(code, status) {
+      Qt.callLater(function() { root.finishPalm(code) })
     }
   }
 
@@ -1196,6 +1282,112 @@ Panel {
                       root.focusSection = "pointer"
                     }
                   }
+                }
+              }
+            }
+          }
+
+          // ========== Palm rejection slider ==========
+          // System libinput quirk, shared by all trackpads. Lower is stronger.
+          SettingRow {
+            sectionName: "palm"
+            visible: root.activeTab === "pointer"
+            width: parent.width
+            implicitHeight: palmContent.implicitHeight + Style.space(28)
+            Column {
+              id: palmContent
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.leftMargin: Style.space(10)
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(8)
+
+              Item {
+                width: parent.width
+                implicitHeight: palmLabel.implicitHeight
+
+                Text {
+                  id: palmLabel
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Palm rejection"
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                Text {
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.palmStrengthLabel(root.pendingPalmThreshold) + "  " + root.pendingPalmThreshold
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              PanelSlider {
+                id: palmSlider
+                objectName: "palmThreshold"
+                bar: root.bar
+                width: parent.width
+                minimum: 100
+                maximum: 1600
+                step: 50
+                value: root.pendingPalmThreshold
+                onMoved: function(v) { root.setPalmThreshold(v) }
+                onReleased: function(v) {
+                  root.setPalmThreshold(v)
+                  root.commitPalmThreshold()
+                }
+              }
+              HoverHandler {
+                onHoveredChanged: if (hovered) {
+                  root.cursorActive = true
+                  root.focusSection = "palm"
+                }
+              }
+
+              Text {
+                width: parent.width
+                text: root.palmStatusText()
+                wrapMode: Text.WordWrap
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                width: parent.width
+                visible: root.palmError !== ""
+                text: root.palmError
+                wrapMode: Text.Wrap
+                color: Color.urgent
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Controls.Button {
+                id: palmInstallButton
+                objectName: "palmInstall"
+                width: parent.width
+                height: Style.space(34)
+                text: "Install system quirks"
+                enabled: !palmProc.running
+                onClicked: root.installPalmQuirks()
+                contentItem: Text {
+                  text: palmInstallButton.text
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                  horizontalAlignment: Text.AlignHCenter
+                  verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                  color: palmInstallButton.hovered ? root.selectedFill : root.hoverFill
+                  border.width: 1
+                  border.color: palmInstallButton.activeFocus ? Color.accent : Qt.alpha(root.bar.foreground, 0.2)
                 }
               }
             }

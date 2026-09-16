@@ -24,6 +24,13 @@ palm/palm-settings install        # copy to /etc (sudo in terminal, pkexec from 
 `install` uses `sudo` in a terminal and `pkexec` from a graphical caller.
 Reboot after install. Internal trackpads re-read quirks only at init.
 
+## Panel slider
+
+The Pointer tab shows a Palm rejection slider (100-1600, step 50),
+a status line (staged, installed, active, reboot hint), and an
+Install system quirks button. Moving the slider stages via
+`palm-settings set`; install prompts for privilege and asks for a reboot.
+
 ## Install
 
 ```bash

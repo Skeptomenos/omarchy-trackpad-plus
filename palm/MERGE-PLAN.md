@@ -17,7 +17,7 @@ Context: Upstream `d6d35e1` synced 2026-09-16. Upstream has DWT toggle but no pa
 - 2026-09-16: Palm scaffold merged (`palm/` template, README, test). Mac gestures ported: `fullscreen_up` plus `scratchpad_down`, schema 8, editor toggles, 8 new tests. Full Python suite passes (104). qmllint clean. qmltestrunner not installed locally.
 - 2026-09-17: Live check on omarchy12 passed. Horizontal swipe, up fullscreen, down scratchpad all work. Down needs a window in scratchpad; empty scratchpad shows nothing. That is Hyprland drag-threshold behavior, not a bug.
 - 2026-09-17: Air validated at 1000. No cursor jumps. Both hosts clean. Default stays 1000.
-- 2026-09-17: Palm backend done. `palm/palm-settings` manages stage, install, status. 8 palm tests pass. Full suite 108 green. Panel slider still open.
+- 2026-09-17: Panel slider done. Pointer tab has rejection slider, status line, install button. qmllint and IPC offscreen pass. Next: live panel check on omarchy12.
 
 ## Decision Log (LIVING)
 
