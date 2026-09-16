@@ -1,0 +1,17 @@
+# Local palm tuning - Trackpad Plus fork
+# Lower = more aggressive palm rejection. Stock Apple value = 1600.
+# Start at 1000. Drop to 800 if palms still move the cursor.
+# Raise to 1200 if real edge finger touches get eaten.
+# Install path: /etc/libinput/local-overrides.quirks (same file on both hosts)
+# Apply: reboot after install (internal SPI/MTP need re-init).
+
+[Apple SPI Touchpad - palm tuning]
+MatchUdevType=touchpad
+MatchBus=spi
+MatchVendor=0x06CB
+AttrPalmSizeThreshold=1000
+
+[Apple MTP Touchpad - palm tuning]
+MatchUdevType=touchpad
+MatchName=Apple*MTP*
+AttrPalmSizeThreshold=1000
