@@ -80,6 +80,40 @@ any name carrying a suffix cannot match it. The separate TrackPoint is excluded.
 Other trackpads whose names omit both words may still need an explicit detection
 rule.
 
+## Apple palm rejection
+
+Select **Apple → Pointer → Palm rejection** for an external Apple Magic Trackpad
+with product ID `0265` (the 2015 model, including its alternate vendor ID).
+The control is shown only when this supported model is connected. Built-in Apple
+trackpads, newer Magic Trackpad models, and Dell trackpads retain their own defaults.
+Both Bluetooth and USB identities receive the same chosen threshold. Two units of
+this same model share it; the setting is model-specific, not tied to a serial number.
+
+Choose **System default** or **Custom**, edit the contact-size threshold, then
+press **Apply palm settings**. Lower values reject smaller contacts; overly low
+values can interfere with fingers and gestures. The system default for this model
+is 900. A value of 700 separated one user's measured palm and finger contacts;
+calibrate your own touches rather than assuming it works for everyone.
+
+Native palm settings need administrator authorization and take effect after
+logging out and back in. The panel reports when the saved change is pending.
+It never ends the desktop session automatically. **System default** removes the
+managed threshold overrides, so subsequent driver updates provide the default.
+
+Install the optional, root-owned writer from a trusted checkout before using Apply:
+
+```sh
+sudo install -Dm644 palm-system.py /usr/local/libexec/trackpad-plus-palm.py
+```
+
+The writer accepts only `default` or a bounded numeric threshold for this Apple
+model. It changes only `/etc/libinput/local-overrides.quirks`, preserves unrelated
+sections, refuses conflicting manual palm rules, and creates root-owned backups
+alongside that file before each change. USB and Bluetooth rules are saved together.
+The earlier local 700 trial is adopted without duplicate rules. No raw touch or
+keyboard data is recorded by this control. The temporary typing-protection service
+from local experimentation is separate and is not installed or managed by this plugin.
+
 ## Workspace gestures
 
 Open the **Gestures** tab. Pointer and scrolling changes save as you use them,
@@ -404,7 +438,7 @@ are separate from the per-device settings in the table.
 Requires Omarchy's Quickshell shell and Lua-based Hyprland configuration
 (tested with Hyprland 0.56.2), Python 3, libinput with custom acceleration support
 (`libinput.so.10`), `hyprctl`, and GNU `timeout` (coreutils). No elevated privileges
-are required. Older Hyprland configurations using `.conf` syntax are unsupported.
+are required for the standard controls; optional native palm settings use the administrator helper described above. Older Hyprland configurations using `.conf` syntax are unsupported.
 
 ```sh
 omarchy plugin add https://github.com/davefano/omarchy-trackpad-plus.git --enable
