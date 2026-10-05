@@ -25,6 +25,11 @@ This release identifier is separate from the backend's settings schema version.
 
 ## Architecture
 
+- `trackpad-typing-guard.py` / `trackpad-typing-guard.service`: optional user
+  service for the saved Apple group when native typing protection is unavailable.
+  Installation is explicit and separate from plugin installation. Keep
+  `WantedBy=graphical-session.target` so an enabled guard returns after login;
+  retain stop-time restoration and avoid logging keyboard events.
 - `palm.py` / `palm-system.py` / `PalmSettings.qml`: model-specific Apple native
   palm thresholds, explicit authorization, safe rule merging, backup and atomic
   writes. Keep privileged code root-owned and run it with Python isolated mode.
@@ -117,6 +122,7 @@ Controls/Test, and Qt development tools (`qmllint`, `qmltestrunner`):
 ```sh
 python3 test_trackpads.py
 python3 test_palm.py
+python3 test_typing_guard.py
 python3 test_gestures.py
 node test-selection.js
 node test-overview-model.js

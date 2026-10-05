@@ -6,6 +6,21 @@ Fine-grained, per-device trackpad controls and pointer-feel tuning for
 [Omarchy](https://omarchy.org). Independently maintained by David Fano;
 not an official Omarchy project or endorsed by the Omarchy team.
 
+## New in 2026.10.05.0
+
+- **Apple palm rejection:** adjust the contact-size threshold for the supported
+  Magic Trackpad 0265 in **Apple → Pointer → Palm rejection**. Install the
+  optional administrator helper first; applied changes take effect at the next
+  login. [Setup and usage](#apple-palm-rejection).
+- **Optional Apple typing guard:** pause the external Apple trackpad while
+  typing, even when native typing protection is unavailable. Its user service
+  starts at desktop login after you explicitly install and enable it.
+  [Install, verify, update, and remove the guard](#optional-apple-typing-guard).
+
+These are separate features: palm rejection filters large contacts, while the
+typing guard temporarily disables the pad. Neither requires changing your
+saved pointer curve or scrolling speed. See the [release notes](RELEASE_NOTES.md).
+
 ## Project history
 
 Trackpad Plus for Omarchy began as a fork of Andrew Kent’s
@@ -51,7 +66,8 @@ gestures apply across trackpads.
 Select a detected trackpad at the top. The **Enable trackpad** switch inside the gear menu turns
 that trackpad on or off. **Natural Scrolling** controls scroll direction;
 **Tap to Click** enables tapping instead of pressing; **Disable While Typing**
-reduces accidental input while typing; **Two-Finger Right Click** enables a
+requests native typing protection where the driver supports it (external Apple
+Magic Trackpads need the optional guard below); **Two-Finger Right Click** enables a
 secondary click by pressing with two fingers.
 
 The sliders and toggles save as you use them. Pointer-curve edits stay in
@@ -106,13 +122,65 @@ Install the optional, root-owned writer from a trusted checkout before using App
 sudo install -Dm644 palm-system.py /usr/local/libexec/trackpad-plus-palm.py
 ```
 
+Run the command from a trusted checkout or the installed plugin directory at
+`${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus`.
+Then open the panel, select **Apple → Pointer → Palm rejection**, choose
+**System default** or a **Custom** threshold, and press **Apply palm settings**.
+Authorize the change and log out and back in when ready. A pending message means
+the saved threshold is awaiting that new desktop session.
+
 The writer accepts only `default` or a bounded numeric threshold for this Apple
 model. It changes only `/etc/libinput/local-overrides.quirks`, preserves unrelated
 sections, refuses conflicting manual palm rules, and creates root-owned backups
 alongside that file before each change. USB and Bluetooth rules are saved together.
 The earlier local 700 trial is adopted without duplicate rules. No raw touch or
-keyboard data is recorded by this control. The temporary typing-protection service
-from local experimentation is separate and is not installed or managed by this plugin.
+keyboard data is recorded by this control. Palm rejection and the optional
+typing guard below are separate features.
+
+## Optional Apple typing guard
+
+The external Apple Magic Trackpad tested on this project does not support
+libinput's native disable-while-typing feature. The panel can save the switch as
+on without the driver suppressing touches. Built-in touchpads may support it,
+but keyboard pairing also matters; an external keyboard does not normally pause
+an internal touchpad. See [libinput's typing protection documentation](https://wayland.freedesktop.org/libinput/doc/latest/palm-detection.html#disable-while-typing).
+
+`trackpad-typing-guard.py` provides a separate, optional guard for the saved
+`apple` device group. It pauses those Apple interfaces during ordinary typing
+on physical keyboards and resumes them about 0.55 seconds after typing stops.
+It honors **Enable trackpad** and **Disable While Typing** in Trackpad Plus.
+Ctrl, Alt, and Super shortcuts do not trigger the pause. The guard reads keyboard
+events without recording typed text; its status contains only counts and flags.
+The desktop user needs read access to the keyboard devices under `/dev/input`.
+It does not protect Dell or separately saved built-in Apple device groups.
+
+Run these commands from a trusted checkout (or the installed plugin directory),
+after the Apple trackpad has appeared in the panel's saved settings:
+
+```sh
+install -Dm644 trackpad-typing-guard.py "$HOME/.local/lib/trackpad-typing-guard.py"
+install -Dm644 trackpad-typing-guard.service "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/trackpad-typing-guard.service"
+systemctl --user daemon-reload
+systemctl --user enable --now trackpad-typing-guard.service
+python3 "$HOME/.local/lib/trackpad-typing-guard.py" status
+```
+
+`enable --now` starts protection now and at future desktop logins. The service's
+`[Install]` section attaches it to `graphical-session.target`; merely starting a
+service without enabling it loses protection after logout or reboot. No
+administrator authorization is needed if input-device access already exists.
+A running guard should report a nonzero `keyboards` count. Verify that the pointer
+stays still while typing and moves again afterward; `pauses` and `resumes` should
+increase. `protection: true` alone does not establish that typing was detected.
+
+Repeat the installation commands to update the optional guard, then run
+`systemctl --user restart trackpad-typing-guard.service`. Plugin updates do not
+update its separate copy automatically. To undo the installation, run
+`systemctl --user disable --now trackpad-typing-guard.service`, remove the two
+files installed above, and run `systemctl --user daemon-reload`. Stopping the
+guard restores the saved Apple enabled state. The guard was physically verified
+on a Dell XPS with an external Apple Magic Trackpad; other setups need their own
+typing test.
 
 ## Workspace gestures
 
@@ -602,6 +670,8 @@ records tested failure cases and remaining compatibility limits. Report bugs thr
 
 ```sh
 # If you enabled gesture management, first use Gestures → Restore original.
+# If you installed the optional typing guard, stop and disable it first:
+# systemctl --user disable --now trackpad-typing-guard.service
 trackpad_plugin="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/davefano.trackpad-plus"
 if test -f "$trackpad_plugin/overview-control.py"; then
   python3 "$trackpad_plugin/overview-control.py" stop
