@@ -449,6 +449,13 @@ that gives 0.1875× precision and 1.00× fast swipes. Existing curves change onl
 when you explicitly apply an edit or preset. This editor does not add scroll
 momentum or change gestures or haptic feedback.
 
+Custom and Mac-inspired profiles currently use the same sample spacing across
+sensors. On high-resolution trackpads, including a reported Intel MacBook Pro
+14,3, they can feel too fast. System and Flat profiles remain available. The
+[proposed per-sensor correction](https://github.com/davefano/omarchy-trackpad-plus/pull/12)
+is not included in version 2026.10.05.0; it still needs device-identity and
+saved-profile compatibility work.
+
 <details>
 <summary>How the curve reaches libinput</summary>
 
@@ -680,8 +687,11 @@ rules or application settings.
 ## Development and testing
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete suite, architecture, and
-live verification checklist. The [release safety review](docs/safety-review.md)
-records tested failure cases and remaining compatibility limits. Report bugs through
+live verification checklist. Run `bash tools/check.sh portable` for the CI suite
+or `bash tools/check.sh host` for the complete automated Omarchy suite.
+The [release safety review](docs/safety-review.md) records tested failure cases
+and remaining compatibility limits; [MARKETPLACE.md](MARKETPLACE.md) tracks
+submission evidence and the listing draft. Report bugs through
 [GitHub Issues](https://github.com/davefano/omarchy-trackpad-plus/issues).
 
 ## Removal
