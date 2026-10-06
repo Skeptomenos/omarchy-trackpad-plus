@@ -19,6 +19,8 @@ run() {
 export PYTHONDONTWRITEBYTECODE=1
 run python3 -m json.tool manifest.json /dev/null
 run python3 test_trackpads.py
+run python3 test_palm.py
+run python3 test_typing_guard.py
 run python3 test_gestures.py
 run node test-selection.js
 run node test-overview-model.js
@@ -35,7 +37,7 @@ if [[ $check_scope == host ]]; then
   run python3 test_overview_ipc.py
   run python3 test_ipc.py
   run python3 lint-qml.py
-  for qml_test in tst_curve.qml tst_gestures.qml tst_overview.qml; do
+  for qml_test in tst_curve.qml tst_palm.qml tst_gestures.qml tst_overview.qml; do
     run env QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic \
       QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
       /usr/lib/qt6/bin/qmltestrunner -input "$qml_test"

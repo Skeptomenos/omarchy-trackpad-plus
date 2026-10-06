@@ -134,7 +134,7 @@ bash tools/check.sh host
 ```
 
 Neither command performs live desktop changes. `host` adds Omarchy manifest
-validation, both real offscreen IPC checks, QML lint, and all three Qt suites.
+validation, both real offscreen IPC checks, QML lint, and all four Qt suites.
 It fails when a dependency or check is missing rather than silently skipping it.
 Live GPU rendering, physical gestures, and installation into a desktop session
 remain separate release checks below. Capture release results and pending

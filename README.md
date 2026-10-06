@@ -453,7 +453,7 @@ Custom and Mac-inspired profiles currently use the same sample spacing across
 sensors. On high-resolution trackpads, including a reported Intel MacBook Pro
 14,3, they can feel too fast. System and Flat profiles remain available. The
 [proposed per-sensor correction](https://github.com/davefano/omarchy-trackpad-plus/pull/12)
-is not included in version 2026.09.15.2; it still needs device-identity and
+is not included in version 2026.10.05.0; it still needs device-identity and
 saved-profile compatibility work.
 
 <details>

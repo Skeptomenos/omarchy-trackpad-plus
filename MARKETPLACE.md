@@ -27,6 +27,25 @@ September 15 check. Recheck uniqueness, including retired IDs, before submitting
 marketplace IDs are permanent. The original `awkent01.touchpad` is a separate
 listing. No ID rename is needed for this derivative.
 
+## Current candidate — October 6, 2026
+
+The candidate now includes release `2026.10.05.0`: model-specific Apple Magic
+Trackpad palm controls and the explicitly installed typing guard. The portable
+runner includes `test_palm.py` and `test_typing_guard.py`; host checks also include
+`tst_palm.qml`. These supplement the existing backend, gesture, overview,
+installation, selection, syntax, and manifest checks. The complete host command
+passed on the Dell XPS (x86_64) during this October 6 refresh, including all four
+Qt suites and both isolated Quickshell IPC checks. This verifies automated host
+integration, not physical swipe acceptance or live GPU capture.
+
+The September results below remain historical evidence for their exact SHA.
+Before marketplace submission, rerun the marketplace baseline against the final
+merged SHA and complete the remaining hardware acceptance checks. This PR does
+not submit a listing or imply that newer runtime changes have marketplace
+approval. The typing guard was physically verified on the Dell XPS with an
+external Apple Magic Trackpad during the October 5 release work; Mac hardware
+acceptance remains separate.
+
 ## Release evidence — September 15, 2026
 
 These results cover runtime source at
