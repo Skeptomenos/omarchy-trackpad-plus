@@ -743,6 +743,26 @@ hl.config({ gestures = { workspace_swipe_distance = 300, workspace_swipe_invert 
         g.change(self.settings)
         self.assertIn('workspace_name = "scratchpad"', g.INPUT.read_text())
 
+    def test_schema_seven_preserves_bytes_until_edit_and_restores_original(self):
+        settings = dict(self.settings, overview=False, overview_provider='hymission')
+        original = 'hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })\n'
+        previous = INPUT.replace(original, g.ANCHOR) + g.block(settings, original, version=7)
+        g.INPUT.write_text(previous)
+        self.assertTrue(g.inspect(previous)['can_edit'])
+        self.assertEqual(g.INPUT.read_text(), previous)
+        g.change(dict(settings, fullscreen_up=True))
+        self.assertEqual(g.parse(g.INPUT.read_text())[2]['fullscreen_up'], True)
+        self.assertIn('"version": 8', g.INPUT.read_text())
+        g.restore()
+        self.assertEqual(g.INPUT.read_text(), INPUT)
+
+    def test_vertical_flags_require_booleans(self):
+        for field in ('fullscreen_up', 'scratchpad_down'):
+            for value in (1, 'true', None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValueError):
+                        g.validate(dict(self.settings, **{field: value}))
+
     def test_schema_eight_block_round_trips(self):
         settings = dict(self.settings, enabled=True, fingers=4, fullscreen_up=True)
         text = g.block(settings, '', version=8)

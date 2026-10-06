@@ -27,9 +27,7 @@ function context() {
     Curve: require('./Curve.js'), previousFeels: {}, curveEditor: {},
     keyCatcher: { forceActiveFocus() {} },
     scrollDebounce: { running: false, stop() { this.running = false; } },
-    pointerDebounce: { running: false, stop() { this.running = false; } },
-    palmThreshold: 1000, pendingPalmThreshold: 1000,
-    palmProc: { running: false }, palmBackend: 'palm/palm-settings'
+    pointerDebounce: { running: false, stop() { this.running = false; } }
   };
   vm.createContext(ctx);
   const functions = qml.match(/^  function \w+\([^\n]*\) \{[^\n]*\}$|^  function \w+\([^\n]*\) \{\n[\s\S]*?^  \}/gm);
@@ -242,12 +240,10 @@ function context() {
   assert.ok(!ctx.navigationSections().includes("scroll"));
   ctx.scrollDebounce.running = true;
   ctx.pendingScrollFactor = 0.15;
-  ctx.pendingPalmThreshold = 800;
   ctx.changeTab("pointer");
   assert.equal(ctx.activeTab, "pointer");
   assert.equal(ctx.scrollDebounce.running, false);
   assert.equal(JSON.parse(ctx.actionProc.command.at(-1)), 0.15);
-  assert.equal(JSON.stringify(ctx.palmProc.command.slice(-3)), JSON.stringify(["palm/palm-settings", "set", "800"]));
 }
 
 {

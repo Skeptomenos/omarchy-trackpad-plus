@@ -110,6 +110,30 @@ Item {
       compare(applySpy.signalArguments[0][0].fullscreen_up, true)
       compare(applySpy.signalArguments[0][0].overview, false)
     }
+    function test_overview_and_swipe_off_clear_vertical_actions() {
+      editor.hymission = {available: true}
+      editor.load({enabled: true, fingers: 4, distance: 300, invert: false,
+                   fullscreen_up: true, scratchpad_down: true})
+      mouseClick(findChild(editor, "gestureOverview"))
+      compare(editor.draft.overview, true)
+      compare(editor.draft.fullscreen_up, false)
+      compare(editor.draft.scratchpad_down, false)
+      mouseClick(findChild(editor, "gestureApply"))
+      compare(applySpy.signalArguments[0][0].fullscreen_up, false)
+      compare(applySpy.signalArguments[0][0].scratchpad_down, false)
+      editor.load({enabled: true, fingers: 3, distance: 300, invert: false,
+                   fullscreen_up: true, scratchpad_down: true})
+      mouseClick(findChild(editor, "gestureEnable"))
+      compare(editor.draft.enabled, false)
+      compare(editor.draft.fullscreen_up, false)
+      compare(editor.draft.scratchpad_down, false)
+      verify(!findChild(editor, "gestureFullscreenUp").enabled)
+      verify(!findChild(editor, "gestureScratchpadDown").enabled)
+      mouseClick(findChild(editor, "gestureApply"))
+      compare(applySpy.signalArguments[1][0].enabled, false)
+      compare(applySpy.signalArguments[1][0].fullscreen_up, false)
+      compare(applySpy.signalArguments[1][0].scratchpad_down, false)
+    }
     function test_unsupported_overview_explains_compatibility_and_allows_turning_off() {
       editor.hymission = {available: false, supported: false, message: "HyMission overview is unavailable on ARM64"}
       compare(findChild(editor, "hymissionInfo").text, "HyMission compatibility ↗")

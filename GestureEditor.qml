@@ -49,6 +49,11 @@ FocusScope {
     if (draft[key] === value) return
     var next = JSON.parse(JSON.stringify(draft))
     next[key] = value
+    if ((key === "overview" && value) || (key === "enabled" && !value)) {
+      next.fullscreen_up = false
+      next.scratchpad_down = false
+    }
+    if ((key === "fullscreen_up" || key === "scratchpad_down") && value) next.overview = false
     draft = next
   }
   function providerDescription() {
@@ -308,10 +313,7 @@ FocusScope {
       selected: editor.draft.fullscreen_up
       enabled: editor.canEdit && editor.draft.enabled && !editor.busy
       Accessible.name: "Swipe up for fullscreen " + (editor.draft.fullscreen_up ? "on" : "off")
-      onClicked: {
-        if (!editor.draft.fullscreen_up && editor.draft.overview) editor.change("overview", false)
-        editor.change("fullscreen_up", !editor.draft.fullscreen_up)
-      }
+      onClicked: editor.change("fullscreen_up", !editor.draft.fullscreen_up)
     }
     Action {
       objectName: "gestureScratchpadDown"
@@ -320,10 +322,7 @@ FocusScope {
       selected: editor.draft.scratchpad_down
       enabled: editor.canEdit && editor.draft.enabled && !editor.busy
       Accessible.name: "Swipe down for scratchpad " + (editor.draft.scratchpad_down ? "on" : "off")
-      onClicked: {
-        if (!editor.draft.scratchpad_down && editor.draft.overview) editor.change("overview", false)
-        editor.change("scratchpad_down", !editor.draft.scratchpad_down)
-      }
+      onClicked: editor.change("scratchpad_down", !editor.draft.scratchpad_down)
     }
     Label {
       width: parent.width
