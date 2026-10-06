@@ -183,6 +183,7 @@ Panel {
         var settings = devices[i].settings
         if (option === "pointer_feel") {
           devices[i].previous_pointer_feel = Curve.fromSettings(settings)
+          devices[i].previous_pointer_feel.calibration = Curve.copy(devices[i].curve_calibration || {})
           settings.accel_profile = value.profile === "mac" || value.profile === "custom" ? "custom" : value.profile
           settings.curve = Curve.copy(value.curve)
           settings.curve_preset = value.profile === "mac" ? "mac" : "custom"
@@ -498,7 +499,7 @@ Panel {
     if (!previousFeels[selectedDevice]) return
     var value = Curve.copy(previousFeels[selectedDevice])
     applyPointerFeel(value)
-    curveEditor.draft = Curve.copy(value)
+    curveEditor.draft = { profile: value.profile, curve: Curve.copy(value.curve) }
   }
 
   function toggleDeviceSettings(key) {

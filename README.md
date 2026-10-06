@@ -474,6 +474,13 @@ that gives 0.1875× precision and 1.00× fast swipes. Existing curves change onl
 when you explicitly apply an edit or preset. This editor does not add scroll
 momentum or change gestures or haptic feedback.
 
+Existing saved Custom and Mac-inspired curves retain their original spacing.
+An explicit **Apply & try** now saves per-interface sensor calibration when the
+device can be identified uniquely. This corrects high-resolution tracking without
+changing existing curves on upgrade. Ambiguous, duplicate, and unknown sensors
+keep the original spacing; System and Flat remain available. Calibration and
+Undo survive disconnection and later refreshes.
+
 <details>
 <summary>How the curve reaches libinput</summary>
 
@@ -490,6 +497,24 @@ before the separate scroll multiplier, unless **Progressive Scrolling** is on.
 Then the same sampling writes a `scroll_points` curve independently of the
 pointer curve. Legacy three-handle curves preserve
 their intended shape during migration and appear as Custom.
+
+Newly applied Mac-inspired and Custom curves account for the trackpad sensor's
+resolution when it can be identified safely. Libinput's custom profile receives
+raw device units, so a 96 units/mm sensor uses 2.4× the sample spacing and a
+47 units/mm Magic Trackpad 2 uses 1.2×. Resolution comes from udev hwdb overrides
+(`EVDEV_ABS_00`) or known Apple USB/Bluetooth kernel values.
+
+**Existing saved curves keep their current feel after updating.** To try the
+correction, open the pointer curve editor, select Mac-inspired or Custom, and
+click Apply. Undo restores the previous curve and its original spacing.
+Calibration is saved separately for each interface, so disconnecting a trackpad
+or restarting Trackpad Plus does not change its saved response. Changing the
+Device scale setting still affects scrolling and the editor's range as before.
+
+Unknown sensors and ambiguous duplicate device names keep the original sample
+spacing. Hyprland's `-N` suffix does not reliably identify a sensor, so Trackpad
+Plus never guesses its resolution. Newly discovered interfaces stay unscaled
+until a curve is explicitly applied to them.
 
 </details>
 
@@ -689,8 +714,11 @@ rules or application settings.
 ## Development and testing
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete suite, architecture, and
-live verification checklist. The [release safety review](docs/safety-review.md)
-records tested failure cases and remaining compatibility limits. Report bugs through
+live verification checklist. Run `bash tools/check.sh portable` for the CI suite
+or `bash tools/check.sh host` for the complete automated Omarchy suite.
+The [release safety review](docs/safety-review.md) records tested failure cases
+and remaining compatibility limits; [MARKETPLACE.md](MARKETPLACE.md) tracks
+submission evidence and the listing draft. Report bugs through
 [GitHub Issues](https://github.com/davefano/omarchy-trackpad-plus/issues).
 
 ## Removal
