@@ -464,15 +464,23 @@ response alone is insufficient. Custom profiles use an identity scroll curve
 before the separate scroll multiplier. Legacy three-handle curves preserve
 their intended shape during migration and appear as Custom.
 
-The curve is defined per millimetre of finger travel, so it feels the same on
-trackpads with different sensor densities. For touchpads, libinput's custom
-profile receives raw device units instead of its usual 1000 dpi normalized
-units, so the backend spaces the samples by each device's resolution: a 96
-units/mm MacBook Pro sensor gets 2.4× the sample spacing, a 47 units/mm Magic
-Trackpad 2 gets 1.2×. Resolution comes from udev hwdb overrides
-(`EVDEV_ABS_00`) or, for Magic Trackpads, the kernel driver's known value;
-devices with neither keep the unscaled samples. A group's interfaces each get
-their own spacing.
+Newly applied Mac-inspired and Custom curves account for the trackpad sensor's
+resolution when it can be identified safely. Libinput's custom profile receives
+raw device units, so a 96 units/mm sensor uses 2.4× the sample spacing and a
+47 units/mm Magic Trackpad 2 uses 1.2×. Resolution comes from udev hwdb overrides
+(`EVDEV_ABS_00`) or known Apple USB/Bluetooth kernel values.
+
+**Existing saved curves keep their current feel after updating.** To try the
+correction, open the pointer curve editor, select Mac-inspired or Custom, and
+click Apply. Undo restores the previous curve and its original spacing.
+Calibration is saved separately for each interface, so disconnecting a trackpad
+or restarting Trackpad Plus does not change its saved response. Changing the
+Device scale setting still affects scrolling and the editor's range as before.
+
+Unknown sensors and ambiguous duplicate device names keep the original sample
+spacing. Hyprland's `-N` suffix does not reliably identify a sensor, so Trackpad
+Plus never guesses its resolution. Newly discovered interfaces stay unscaled
+until a curve is explicitly applied to them.
 
 </details>
 

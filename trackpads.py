@@ -73,36 +73,53 @@ UDEV_DATA = Path('/run/udev/data')
 # Kernel X resolutions (units/mm) for Apple USB/Bluetooth trackpads, keyed by
 # product ID. hid-magicmouse sets them without a udev override:
 # Magic Trackpad = (3167 + 2909) / 130, Magic Trackpad 2 = (3934 + 3678) / 160.
-KERNEL_RESOLUTIONS = {('05ac', '030e'): 46, ('05ac', '0265'): 47, ('05ac', '0324'): 47}
+KERNEL_RESOLUTIONS = {(vendor, product): resolution
+                      for vendor in ('05ac', '004c')
+                      for product, resolution in (('030e', 46), ('0265', 47), ('0324', 47))}
 
 
 def device_resolution(name):
-    """X resolution (units/mm) of the Hyprland device `name`, or None if unknown.
+    """Resolve only a unique unsuffixed evdev name; never guess duplicate identity.
 
-    Hyprland names are the evdev name lowercased with spaces as dashes, plus a
-    -N suffix for duplicates. The evdev node needs input permissions, so read
-    the udev database (hwdb EVDEV_ABS overrides) and sysfs IDs instead. Unknown
-    devices return None and keep the unscaled curve.
+    Hyprland's duplicate -N suffix does not identify a sysfs node. Even if only
+    one such node is currently connected, a saved suffixed name is ambiguous.
     """
-    wanted = {name, re.sub(r'-[0-9]+$', '', name)}
-    for event in sorted(SYSFS_INPUT.glob('event*')):
+    if re.search(r'-[0-9]+$', name):
+        return None
+    matches = []
+    for event in SYSFS_INPUT.glob('event*'):
         try:
-            evdev_name = (event / 'device/name').read_text().strip()
-            if evdev_name.lower().replace(' ', '-') not in wanted:
-                continue
-            udev = UDEV_DATA / ('c' + (event / 'dev').read_text().strip())
-            if udev.exists():
-                for line in udev.read_text().splitlines():
-                    match = re.fullmatch(r'E:EVDEV_ABS_00=[^:]*:[^:]*:([0-9]+)(:.*)?', line)
-                    if match and int(match.group(1)) > 0:
-                        return int(match.group(1))
-            ids = tuple((event / 'device/id' / key).read_text().strip().lower()
-                        for key in ('vendor', 'product'))
-            if ids in KERNEL_RESOLUTIONS:
-                return KERNEL_RESOLUTIONS[ids]
+            if (event / 'device/name').read_text().strip().lower().replace(' ', '-') == name:
+                matches.append(event)
         except OSError:
             continue
-    return None
+    if len(matches) != 1:
+        return None
+    event = matches[0]
+    try:
+        udev = UDEV_DATA / ('c' + (event / 'dev').read_text().strip())
+        if udev.exists():
+            for line in udev.read_text().splitlines():
+                match = re.fullmatch(r'E:EVDEV_ABS_00=[^:]*:[^:]*:([0-9]+)(:.*)?', line)
+                if match and 0 < int(match.group(1)) <= 65535:
+                    return int(match.group(1))
+        ids = tuple((event / 'device/id' / key).read_text().strip().lower()
+                    for key in ('vendor', 'product'))
+        return KERNEL_RESOLUTIONS.get(ids)
+    except OSError:
+        return None
+
+
+def validate_calibration(value, names=None):
+    if not isinstance(value, dict) or len(value) > 32:
+        raise ValueError('Invalid curve calibration')
+    for name, resolution in value.items():
+        validate_name(name)
+        if names is not None and name not in names:
+            raise ValueError('Curve calibration must belong to a saved interface')
+        if type(resolution) not in (int, float) or not math.isfinite(resolution) or not 0 < resolution <= 65535:
+            raise ValueError('Invalid curve sensor resolution')
+    return value
 
 
 def hypr(*args):
@@ -240,7 +257,7 @@ def lua_for(groups):
                 if key == 'accel_profile' and value == 'custom':
                     # Per device: one group can mix sensors of different resolutions.
                     value = curve_profile(group['settings'].get('curve', DEFAULT_CURVE),
-                                          device_resolution(name))
+                                          group.get('curve_calibration', {}).get(name))
                 fields.append(f'{key} = {json.dumps(value)}')
             if group['settings'].get('accel_profile') == 'custom':
                 # Explicit identity scrolling, independent of the pointer curve.
@@ -351,7 +368,7 @@ def state_lock():
 def validate_state(state):
     if not isinstance(state, dict) or set(state) != {'version', 'devices'}:
         raise ValueError('Invalid trackpad state structure')
-    if type(state['version']) is not int or state['version'] not in (1, 2, 3, 4):
+    if type(state['version']) is not int or state['version'] not in (1, 2, 3, 4, 5):
         raise ValueError('Unsupported trackpad state version; saved settings were not changed')
     devices = state['devices']
     if not isinstance(devices, dict) or len(devices) > 128:
@@ -359,7 +376,7 @@ def validate_state(state):
     all_names = set()
     for key, group in devices.items():
         validate_name(key)
-        if not isinstance(group, dict) or set(group) - {'id', 'label', 'names', 'settings', 'previous_pointer_feel', 'configured'}:
+        if not isinstance(group, dict) or set(group) - {'id', 'label', 'names', 'settings', 'previous_pointer_feel', 'configured', 'curve_calibration'}:
             raise ValueError('Invalid trackpad group')
         if group.get('id') != key or not isinstance(group.get('label'), str) or not 1 <= len(group['label']) <= 128:
             raise ValueError('Invalid trackpad identity')
@@ -382,8 +399,10 @@ def validate_state(state):
         normalized = settings['scroll_factor'] / scale
         if not 0.01 - 1e-9 <= normalized <= 1 + 1e-9:
             raise ValueError('Scroll speed must be between 0.01 and 1.00 of the device scale')
+        validate_calibration(group.get('curve_calibration', {}), names)
         if 'previous_pointer_feel' in group:
             validate_change('pointer_feel', group['previous_pointer_feel'])
+            validate_calibration(group['previous_pointer_feel'].get('calibration', {}), names)
     return state
 
 
@@ -391,11 +410,13 @@ def validate_change(option, value):
     if option != 'pointer_feel':
         validate_setting(option, value)
         return
-    if not isinstance(value, dict) or set(value) != {'profile', 'curve'}:
+    if not isinstance(value, dict) or not {'profile', 'curve'} <= set(value) or set(value) - {'profile', 'curve', 'calibration'}:
         raise ValueError('Expected a pointer profile and curve')
     if value['profile'] not in ('adaptive', 'flat', 'mac', 'custom'):
         raise ValueError('Unknown pointer profile')
     validate_curve(value['curve'])
+    if 'calibration' in value:
+        validate_calibration(value['calibration'])
 
 
 def recover_pending():
@@ -441,6 +462,8 @@ def validate_persisted(state):
     for group in state['devices'].values():
         if group['settings'].get('accel_profile') == 'custom':
             validate_native_curve(group['settings'].get('curve', DEFAULT_CURVE))
+            for resolution in set(group.get('curve_calibration', {}).values()):
+                validate_native_profile(curve_profile(group['settings'].get('curve', DEFAULT_CURVE), resolution))
 
 
 def save(state):
@@ -458,6 +481,8 @@ def reconcile_generated(state, previous=None):
     for group in state['devices'].values():
         if group['settings'].get('accel_profile') == 'custom':
             validate_native_curve(group['settings'].get('curve', DEFAULT_CURVE))
+            for resolution in set(group.get('curve_calibration', {}).values()):
+                validate_native_profile(curve_profile(group['settings'].get('curve', DEFAULT_CURVE), resolution))
     groups = state['devices']
     if previous is not None:
         # Old curve formats cannot be rendered by the current Lua serializer.
@@ -531,7 +556,7 @@ def snapshot(state, live):
 
 def migrate(state):
     """The previous panel inherited the driver's default adaptive profile."""
-    if not isinstance(state, dict) or type(state.get('version')) is not int or state['version'] not in (1, 2, 3, 4):
+    if not isinstance(state, dict) or type(state.get('version')) is not int or state['version'] not in (1, 2, 3, 4, 5):
         raise ValueError('Unsupported trackpad state version; saved settings were not changed')
     updated = copy.deepcopy(state)
     for group in updated['devices'].values():
@@ -550,13 +575,15 @@ def migrate(state):
             # The old Mac preset has a different shape from the new starting preset.
             settings['curve_preset'] = 'custom'
         previous = group.get('previous_pointer_feel')
+        if previous is not None:
+            previous.setdefault('calibration', {})
         if previous and 'transition' in previous.get('curve', {}):
             old = previous['curve']
             previous['curve'] = validate_curve({'precision': old['precision'], 'start': 0,
                                                'end': 2 * old['transition'], 'fast': old['fast']})
             if previous['profile'] == 'mac':
                 previous['profile'] = 'custom'
-    updated['version'] = 4
+    updated['version'] = 5
     validate_state(updated)
     devices = updated['devices']
     legacy = [key for key in LEGACY_APPLE if key in devices
@@ -586,8 +613,14 @@ def change(state, key, option, value):
         updated['devices'][key]['configured'] = True
     settings = updated['devices'][key]['settings']
     if option == 'pointer_feel':
-        if not isinstance(value, dict) or set(value) != {'profile', 'curve'}:
-            raise ValueError('Expected a pointer profile and curve')
+        validate_change(option, value)
+        group = updated['devices'][key]
+        previous = group.get('previous_pointer_feel')
+        # Old clients may omit metadata when sending the saved undo record.
+        restoring = previous is not None and (value == previous or
+                    ('calibration' not in value and value == {k: previous[k] for k in ('profile', 'curve')}))
+        if 'calibration' in value and not restoring:
+            raise ValueError('Calibration can only restore the saved previous pointer feel')
         profile = value['profile']
         if profile not in ('adaptive', 'flat', 'mac', 'custom'):
             raise ValueError('Unknown pointer profile')
@@ -596,7 +629,16 @@ def change(state, key, option, value):
         updated['devices'][key]['previous_pointer_feel'] = {
             'profile': settings.get('curve_preset', 'custom') if old_profile == 'custom' else old_profile,
             'curve': copy.deepcopy(settings.get('curve', DEFAULT_CURVE)),
+            'calibration': copy.deepcopy(group.get('curve_calibration', {})),
         }
+        if restoring:
+            calibration = previous.get('calibration', {})
+        elif profile in ('mac', 'custom'):
+            calibration = {name: resolution for name in group['names']
+                           if (resolution := device_resolution(name)) is not None}
+        else:
+            calibration = {}
+        group['curve_calibration'] = copy.deepcopy(calibration)
         settings['accel_profile'] = 'custom' if profile in ('mac', 'custom') else profile
         settings['curve'] = dict(curve)  # The editor sizes new presets to the device range.
         settings['curve_preset'] = 'mac' if profile == 'mac' else 'custom'

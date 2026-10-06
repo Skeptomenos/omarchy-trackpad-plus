@@ -41,10 +41,16 @@ This release identifier is separate from the backend's settings schema version.
 - `trackpads.py`: device discovery, validation, file locking, persistence, and
   per-device `hl.device` updates. The libinput validator creates configuration
   objects without opening devices. Keep its sampled curve in sync with Curve.js.
-  Curve.js plots gain per normalized unit; the backend alone scales the native
-  sample spacing by each device's resolution (sysfs name/IDs and the udev
-  database, both readable without input permissions). Tests point
-  `SYSFS_INPUT`/`UDEV_DATA` at temporary trees so host devices never leak in.
+  Curve.js plots gain per normalized unit. Explicit Mac/custom Apply captures
+  `curve_calibration` per saved interface name from unique sysfs names, udev
+  `EVDEV_ABS_00`, or known Apple USB/Bluetooth IDs. Duplicate names and `-N`
+  suffixes are ambiguous and remain unscaled. Rendering uses saved calibration,
+  never live hardware. Schema 5 accepts versions 1–4 without recalibrating saved
+  curves; old undo records gain empty `calibration` metadata, preserving their
+  original spacing. Every pointer edit saves the previous curve and calibration;
+  undo payloads may restore that exact record. Device scale semantics stay the
+  same. Tests point `SYSFS_INPUT`/`UDEV_DATA` at temporary trees so host devices
+  never leak in.
 - `gestures.py` / `GestureEditor.qml`: global workspace gestures, explicit
   adoption of literal bindings in input.lua, marked-block persistence and
   compare-before-restore recovery. Uses the existing bounded subprocesses,

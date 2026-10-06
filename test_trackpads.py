@@ -36,7 +36,7 @@ class TrackpadTests(unittest.TestCase):
         state = m.migrate(self.state)
         raw = copy.deepcopy(state['devices']['apple'])
         raw.update(id=name, label=name, names=[name], configured=True)
-        raw['previous_pointer_feel'] = {'profile': 'flat', 'curve': dict(m.DEFAULT_CURVE)}
+        raw['previous_pointer_feel'] = {'profile': 'flat', 'curve': dict(m.DEFAULT_CURVE), 'calibration': {}}
         raw['settings']['scroll_factor'] = 0.34
         if not with_apple:
             del state['devices']['apple']
@@ -284,7 +284,7 @@ class TrackpadTests(unittest.TestCase):
         self.assertEqual(m.read_state_file(m.STATE), 'safe')
 
     def test_future_and_malformed_state_is_rejected(self):
-        for state in [dict(self.state, version=5), dict(self.state, version=True),
+        for state in [dict(self.state, version=6), dict(self.state, version=True),
                       dict(self.state, extra='unsupported')]:
             with self.assertRaises(ValueError):
                 m.migrate(state)
@@ -456,7 +456,7 @@ class TrackpadTests(unittest.TestCase):
 
     def test_acceleration_migration_preserves_existing_settings(self):
         migrated = m.migrate(self.state)
-        self.assertEqual(migrated['version'], 4)
+        self.assertEqual(migrated['version'], 5)
         for key in self.groups:
             settings = dict(migrated['devices'][key]['settings'])
             self.assertEqual(settings.pop('accel_profile'), 'adaptive')
@@ -591,6 +591,84 @@ class TrackpadTests(unittest.TestCase):
             self.assertEqual(points, sorted(points))
             self.assertAlmostEqual((points[-1] - points[-2]) / 0.1, curve['fast'])
 
+    def test_legacy_custom_and_undo_remain_unscaled_on_migration(self):
+        self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '05ac', '0265')
+        state = m.migrate(self.state)
+        state['version'] = 4
+        group = state['devices']['apple']
+        group['settings'].update(accel_profile='custom', curve=dict(m.DEFAULT_CURVE), curve_preset='custom')
+        group['previous_pointer_feel'] = {'profile': 'custom', 'curve': dict(m.DEFAULT_CURVE, fast=2)}
+        migrated = m.migrate(state)
+        self.assertIn('accel_profile = "' + m.curve_profile(m.DEFAULT_CURVE) + '"', m.lua_for(migrated['devices']))
+        with patch.object(m, 'hypr', return_value='ok'):
+            changed = m.change(migrated, 'apple', 'pointer_feel', {'profile': 'mac', 'curve': m.DEFAULT_CURVE})
+            restored = m.change(changed, 'apple', 'pointer_feel', changed['devices']['apple']['previous_pointer_feel'])
+            self.assertEqual(m.lua_for(restored['devices']), m.lua_for(migrated['devices']))
+            old_undo = m.change(migrated, 'apple', 'pointer_feel', migrated['devices']['apple']['previous_pointer_feel'])
+            self.assertIn('accel_profile = "' + m.curve_profile(dict(m.DEFAULT_CURVE, fast=2)) + '"', m.lua_for(old_undo['devices']))
+
+    def test_explicit_curve_calibration_persists_when_sensor_disconnects_and_undo_restores_it(self):
+        self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '05ac', '0265')
+        with patch.object(m, 'hypr', return_value='ok'):
+            state = m.change(m.migrate(self.state), 'apple', 'pointer_feel', {'profile': 'mac', 'curve': m.DEFAULT_CURVE})
+            group = state['devices']['apple']
+            self.assertEqual(group['curve_calibration'], {'apple-inc.-magic-trackpad': 47})
+            connected = m.lua_for(state['devices'])
+            (self.sysfs / 'event5').rename(self.sysfs / 'disconnected')
+            self.assertEqual(m.lua_for(state['devices']), connected)
+            m.save(state)
+            self.assertEqual(m.GENERATED.read_text(), connected)
+            changed = m.change(state, 'apple', 'pointer_feel', {'profile': 'flat', 'curve': m.DEFAULT_CURVE})
+            restored = m.change(changed, 'apple', 'pointer_feel', changed['devices']['apple']['previous_pointer_feel'])
+            self.assertEqual(m.lua_for(restored['devices']), connected)
+
+    def test_saved_calibration_rendering_never_depends_on_live_discovery(self):
+        self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '05ac', '0265')
+        state = m.migrate(self.state)
+        group = state['devices']['apple']
+        group['settings'].update(accel_profile='custom', curve=dict(m.DEFAULT_CURVE), curve_preset='mac')
+        group['curve_calibration'] = {'apple-inc.-magic-trackpad': 47}
+        connected = m.lua_for(state['devices'])
+        (self.sysfs / 'event5').rename(self.sysfs / 'disconnected')
+        self.assertEqual(m.lua_for(state['devices']), connected)
+        with patch.object(m, 'device_resolution', side_effect=AssertionError('Rendering must use saved calibration')):
+            self.assertEqual(m.lua_for(state['devices']), connected)
+
+    def test_undo_from_client_without_calibration_preserves_saved_spacing(self):
+        self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '05ac', '0265')
+        with patch.object(m, 'hypr', return_value='ok'):
+            legacy = m.migrate(self.state)
+            legacy['devices']['apple']['settings'].update(accel_profile='custom', curve=dict(m.DEFAULT_CURVE), curve_preset='custom')
+            changed = m.change(legacy, 'apple', 'pointer_feel', {'profile': 'mac', 'curve': dict(m.DEFAULT_CURVE, fast=2)})
+            previous = changed['devices']['apple']['previous_pointer_feel']
+            restored = m.change(changed, 'apple', 'pointer_feel', {k: previous[k] for k in ('profile', 'curve')})
+            self.assertEqual(m.lua_for(restored['devices']), m.lua_for(legacy['devices']))
+
+    def test_invalid_or_unowned_calibration_is_rejected_before_writes(self):
+        for calibration in [{'other-trackpad': 47}, {'apple-inc.-magic-trackpad': True},
+                            {'apple-inc.-magic-trackpad': 0}, {'apple-inc.-magic-trackpad': float('inf')},
+                            {'apple-inc.-magic-trackpad': 65536}, []]:
+            state = m.migrate(self.state)
+            state['devices']['apple']['curve_calibration'] = calibration
+            with patch.object(m, 'atomic_write') as write, self.assertRaises(ValueError):
+                m.save(state)
+            write.assert_not_called()
+        with patch.object(m, 'atomic_write') as write, self.assertRaises(ValueError):
+            m.change(m.migrate(self.state), 'apple', 'pointer_feel',
+                     {'profile': 'mac', 'curve': m.DEFAULT_CURVE, 'calibration': {'apple-inc.-magic-trackpad': 47}})
+        write.assert_not_called()
+
+    def test_duplicate_sensor_names_never_guess_calibration(self):
+        self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '05ac', '0265')
+        self.add_input_device('event7', 'Apple Inc. Magic Trackpad', '13:71', '05ac', '0324', udev='E:EVDEV_ABS_00=::80\n')
+        self.assertIsNone(m.device_resolution('apple-inc.-magic-trackpad'))
+        self.assertIsNone(m.device_resolution('apple-inc.-magic-trackpad-1'))
+        self.assertIsNone(m.device_resolution('apple-inc.-magic-trackpad-9'))
+
+    def test_bluetooth_apple_kernel_resolution(self):
+        self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '004c', '0265')
+        self.assertEqual(m.device_resolution('apple-inc.-magic-trackpad'), 47)
+
     def test_custom_curve_spacing_follows_device_resolution(self):
         curve = dict(m.DEFAULT_CURVE, precision=0.1875, fast=1)
         unscaled = m.curve_profile(curve).split()
@@ -611,11 +689,11 @@ class TrackpadTests(unittest.TestCase):
                               udev='E:EVDEV_ABS_00=1:7000:80:0:0\n')
         self.add_input_device('event9', 'Unknown Touchpad', '13:73', '06cb', 'd01d', udev='E:ID_INPUT=1\n')
         self.assertEqual(m.device_resolution('apple-spi-touchpad'), 96)
-        self.assertEqual(m.device_resolution('apple-inc.-magic-trackpad'), 47)
-        self.assertEqual(m.device_resolution('apple-inc.-magic-trackpad-1'), 47)
+        self.assertIsNone(m.device_resolution('apple-inc.-magic-trackpad'))
+        self.assertIsNone(m.device_resolution('apple-inc.-magic-trackpad-1'))
         self.assertIsNone(m.device_resolution('unknown-touchpad'))
         self.assertIsNone(m.device_resolution('missing-touchpad'))
-        (self.sysfs / 'event7').rename(self.sysfs / 'event99')
+        (self.sysfs / 'event7').rename(self.sysfs / 'disconnected')
         self.assertEqual(m.device_resolution('apple-inc.-magic-trackpad'), 80)
 
     def test_mixed_resolution_group_emits_per_device_curves(self):
@@ -626,9 +704,11 @@ class TrackpadTests(unittest.TestCase):
         curve = dict(m.DEFAULT_CURVE, precision=0.1875, fast=1)
         for group in groups.values():
             group['settings'] = {'accel_profile': 'custom', 'curve': curve, 'curve_preset': 'mac'}
+            group['curve_calibration'] = {name: resolution for name in group['names']
+                                          if (resolution := m.device_resolution(name)) is not None}
         lua = m.lua_for(groups)
         for name, resolution in [('apple-spi-touchpad', 96), ('apple-inc.-magic-trackpad', 47),
-                                 ('apple-inc.-magic-trackpad-9', 47), ('unlisted-trackpad', None)]:
+                                 ('apple-inc.-magic-trackpad-9', None), ('unlisted-trackpad', None)]:
             self.assertIn('name = "%s", accel_profile = "%s"' % (name, m.curve_profile(curve, resolution)), lua)
 
     def test_native_libinput_accepts_curve_and_rejects_old_81_point_payload(self):
