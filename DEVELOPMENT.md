@@ -37,10 +37,21 @@ This release identifier is separate from the backend's settings schema version.
 - `Panel.qml`: Omarchy bar widget, device selection, debounced action queue,
   deadlines, and rejection of stale reads.
 - `CurveEditor.qml` / `Curve.js`: draft curve editing, spinners, presets, and
-  target practice. Only Apply changes the live profile.
+  target practice. Pointer and scroll modes share the editor; only Apply
+  changes the live profile. Keep sampled curves in sync with `trackpads.py`.
 - `trackpads.py`: device discovery, validation, file locking, persistence, and
   per-device `hl.device` updates. The libinput validator creates configuration
   objects without opening devices. Keep its sampled curve in sync with Curve.js.
+  Curve.js plots gain per normalized unit. Explicit Mac/custom Apply captures
+  `curve_calibration` per saved interface name from unique sysfs names, udev
+  `EVDEV_ABS_00`, or known Apple USB/Bluetooth IDs. Duplicate names and `-N`
+  suffixes are ambiguous and remain unscaled. Rendering uses saved calibration,
+  never live hardware. Schema 5 accepts versions 1–4 without recalibrating saved
+  curves; old undo records gain empty `calibration` metadata, preserving their
+  original spacing. Every pointer edit saves the previous curve and calibration;
+  undo payloads may restore that exact record. Device scale semantics stay the
+  same. Tests point `SYSFS_INPUT`/`UDEV_DATA` at temporary trees so host devices
+  never leak in.
 - `gestures.py` / `GestureEditor.qml`: global workspace gestures, explicit
   adoption of literal bindings in input.lua, marked-block persistence and
   compare-before-restore recovery. Uses the existing bounded subprocesses,
@@ -115,15 +126,48 @@ Scroll scale is per-group settings metadata. The backend stores the effective
 Scale changes rescale the effective value in the same journaled transaction;
 queued slider edits must commit under their old scale first. Schema 4 migration
 adds scale metadata without changing effective factors or generated Lua.
-The editor also uses that scale as its vertical gain limit. Saved curves stay in
+The pointer editor also uses that scale as its vertical gain limit. Saved curves stay in
 absolute gain units; changing the axis does not rescale them. Newly selected
 Mac-inspired presets fit the available range, and the backend applies the exact
 validated curve supplied by the editor, including when restoring a preset.
+Progressive scrolling is opt-in. Its curve is an independent multiplier before
+`scroll_factor`, with a fixed 1×–2× default and a separate 10× editor gain limit.
+Neither choosing the scroll preset nor changing `scroll_scale` rescales a saved
+scroll curve. Consecutive `scroll_feel` writes retain their queue order, like
+`pointer_feel`, so Apply/Restore preserves the previous curve. Progressive
+scrolling requires the custom pointer profile; enabling it from System/Flat
+selects a Mac-inspired pointer curve, and choosing System/Flat disables it.
 Do not change saved group IDs or historical state paths without a migration.
 
 ## Complete automated suite
 
-Run on an Omarchy host with Python 3, Node.js, libinput, Quickshell, Qt 6 Quick
+GitHub Actions runs `bash tools/check.sh portable` on Ubuntu 24.04 for pull
+requests and pushes to `main`. It uses Python 3, Node.js 24, Lua 5.4, and `libinput10`;
+the native curve acceptance tests run against the installed library. The job
+needs no desktop session, input-device access, repository secrets, or write
+token. Third-party pull requests run on GitHub-hosted runners.
+
+The portable checks cover backend behavior, gestures against fake compositor
+responses, device selection, the overview model/controller, lock protocol
+parsing, and tracked-file installation. They check manifest JSON syntax, but
+Omarchy's manifest validation and host integration run separately.
+
+Run all automated checks, including the portable suite, on an Omarchy host:
+
+```sh
+bash tools/check.sh host
+```
+
+Neither command performs live desktop changes. `host` adds Omarchy manifest
+validation, both real offscreen IPC checks, QML lint, and all four Qt suites.
+It fails when a dependency or check is missing rather than silently skipping it.
+Live GPU rendering, physical gestures, and installation into a desktop session
+remain separate release checks below. Capture release results and pending
+checks in [MARKETPLACE.md](MARKETPLACE.md).
+
+To run individual suites while developing:
+
+Run on an Omarchy host with Python 3, Node.js, Lua 5.4, libinput, Quickshell, Qt 6 Quick
 Controls/Test, and Qt development tools (`qmllint`, `qmltestrunner`):
 
 ```sh

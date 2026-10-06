@@ -49,7 +49,10 @@ gestures apply across trackpads.
   configure tapping, typing protection, and two-finger right click. System and
   Flat profiles also expose **Pointer Speed**.
 - **Scrolling:** adjust **Scroll Speed** and **Natural Scrolling** independently
-  of the pointer curve.
+  of the pointer curve. Optional **Progressive Scrolling** applies a separate
+  acceleration curve so slow swipes stay precise and faster flicks cover more
+  distance. It requires a custom pointer profile (Mac-inspired or Custom);
+  turning it on from System or Flat switches pointer feel to Mac-inspired.
 - **Gestures:** configure horizontal workspace swipes and an optional upward
   swipe for the workspace overview. Test the overview before applying gestures.
 
@@ -58,8 +61,9 @@ gestures apply across trackpads.
 - Enable or disable the selected trackpad.
 - Scroll speed (0.01–1.00, in 0.01 steps) with a per-device scale, and pointer speed (−1.0–1.0).
 - Pointer feel: System (adaptive), Flat, Mac-inspired, and Custom profiles.
+- Progressive scrolling with a Mac-inspired or Custom scroll acceleration curve.
 - Visual acceleration editor with draggable precision, acceleration start/end, and fast-swipe
-  handles, keyboard adjustment, target practice, and Restore previous.
+  handles, keyboard adjustment, target practice (pointer only), and Restore previous.
 - Natural scrolling, tap to click, disable while typing, and clickfinger behavior.
 - Keyboard navigation through device selection, sliders, and switches.
 
@@ -70,8 +74,8 @@ requests native typing protection where the driver supports it (external Apple
 Magic Trackpads need the optional guard below); **Two-Finger Right Click** enables a
 secondary click by pressing with two fingers.
 
-The sliders and toggles save as you use them. Pointer-curve edits stay in
-preview until you press **Apply & try**.
+The sliders and toggles save as you use them. Pointer-curve and scroll-curve
+edits stay in preview until you press **Apply & try**.
 
 The footer shows the installed version, starting with **2026.09.13.0**. Releases
 use **YYYY.MM.DD.N**: release date followed by a revision starting at 0 and
@@ -414,6 +418,27 @@ effective `scroll_factor` and separate `scroll_scale`; only the effective factor
 is emitted to Hyprland. Back up both plugin and settings before upgrading;
 downgrading requires restoring the matching settings backup.
 
+## Progressive scrolling
+
+Open **Scrolling** and turn on **Progressive Scrolling** to make faster
+two-finger flicks travel farther. It is off by default, so existing scrolling
+stays linear. **Scroll Speed** and **Device scale** still control the overall
+scroll speed. The default curve adds a **1× multiplier for slow movement** and
+smoothly rises to **2× for fast flicks**, independent of Device scale.
+
+Use **Scroll acceleration** to choose **Mac-inspired** or edit a **Custom**
+curve. Its chart and gain controls have a separate **10× maximum**. Press
+**Apply & try** to save; **Restore previous** swaps back to the last applied
+scroll curve for that device. Choosing **Mac-inspired** restores the 1×–2×
+shape without changing Scroll Speed or Device scale.
+
+Progressive scrolling requires libinput's custom acceleration profile.
+Enabling it while the pointer uses **System** or **Flat** also selects the
+Mac-inspired pointer curve. You can then edit the pointer curve separately.
+Choosing **System** or **Flat** again disables progressive scrolling. Turning
+**Progressive Scrolling** off restores linear scrolling while keeping your
+pointer curve and saved scroll curve.
+
 ## How pointer feel works
 
 <img src="assets/screenshots/pointer-feel.png" alt="Custom pointer curve on a MacBook Air M2: precision 0.0100, start 0%, end 100%, and fast swipes 0.3500, on a 0–1× chart" width="430">
@@ -463,6 +488,13 @@ that gives 0.1875× precision and 1.00× fast swipes. Existing curves change onl
 when you explicitly apply an edit or preset. This editor does not add scroll
 momentum or change gestures or haptic feedback.
 
+Existing saved Custom and Mac-inspired curves retain their original spacing.
+An explicit **Apply & try** now saves per-interface sensor calibration when the
+device can be identified uniquely. This corrects high-resolution tracking without
+changing existing curves on upgrade. Ambiguous, duplicate, and unknown sensors
+keep the original spacing; System and Flat remain available. Calibration and
+Undo survive disconnection and later refreshes.
+
 <details>
 <summary>How the curve reaches libinput</summary>
 
@@ -475,8 +507,28 @@ Each custom curve is validated with the installed libinput library before it
 is applied or saved. Libinput accepts at most 64 points; Hyprland 0.56 does not
 report point-validation failures through `hyprctl eval`, so the compositor's
 response alone is insufficient. Custom profiles use an identity scroll curve
-before the separate scroll multiplier. Legacy three-handle curves preserve
+before the separate scroll multiplier, unless **Progressive Scrolling** is on.
+Then the same sampling writes a `scroll_points` curve independently of the
+pointer curve. Legacy three-handle curves preserve
 their intended shape during migration and appear as Custom.
+
+Newly applied Mac-inspired and Custom curves account for the trackpad sensor's
+resolution when it can be identified safely. Libinput's custom profile receives
+raw device units, so a 96 units/mm sensor uses 2.4× the sample spacing and a
+47 units/mm Magic Trackpad 2 uses 1.2×. Resolution comes from udev hwdb overrides
+(`EVDEV_ABS_00`) or known Apple USB/Bluetooth kernel values.
+
+**Existing saved curves keep their current feel after updating.** To try the
+correction, open the pointer curve editor, select Mac-inspired or Custom, and
+click Apply. Undo restores the previous curve and its original spacing.
+Calibration is saved separately for each interface, so disconnecting a trackpad
+or restarting Trackpad Plus does not change its saved response. Changing the
+Device scale setting still affects scrolling and the editor's range as before.
+
+Unknown sensors and ambiguous duplicate device names keep the original sample
+spacing. Hyprland's `-N` suffix does not reliably identify a sensor, so Trackpad
+Plus never guesses its resolution. Newly discovered interfaces stay unscaled
+until a curve is explicitly applied to them.
 
 </details>
 
@@ -676,8 +728,11 @@ rules or application settings.
 ## Development and testing
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete suite, architecture, and
-live verification checklist. The [release safety review](docs/safety-review.md)
-records tested failure cases and remaining compatibility limits. Report bugs through
+live verification checklist. Run `bash tools/check.sh portable` for the CI suite
+or `bash tools/check.sh host` for the complete automated Omarchy suite.
+The [release safety review](docs/safety-review.md) records tested failure cases
+and remaining compatibility limits; [MARKETPLACE.md](MARKETPLACE.md) tracks
+submission evidence and the listing draft. Report bugs through
 [GitHub Issues](https://github.com/davefano/omarchy-trackpad-plus/issues).
 
 ## Removal
