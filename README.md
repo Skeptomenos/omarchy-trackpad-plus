@@ -512,8 +512,9 @@ or restarting Trackpad Plus does not change its saved response. Changing the
 Device scale setting still affects scrolling and the editor's range as before.
 
 Unknown sensors and ambiguous duplicate device names keep the original sample
-spacing. Hyprland's `-N` suffix does not reliably identify a sensor, so Trackpad
-Plus never guesses its resolution. Newly discovered interfaces stay unscaled
+spacing. Resolution lookup requires a unique exact native device name. Hyprland's
+added `-N` suffix does not reliably identify a sensor, so Trackpad Plus never
+strips it or guesses its resolution. Newly discovered interfaces stay unscaled
 until a curve is explicitly applied to them.
 
 </details>

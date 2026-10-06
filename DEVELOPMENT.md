@@ -44,9 +44,10 @@ This release identifier is separate from the backend's settings schema version.
   objects without opening devices. Keep its sampled curve in sync with Curve.js.
   Curve.js plots gain per normalized unit. Explicit Mac/custom Apply captures
   `curve_calibration` per saved interface name from unique sysfs names, udev
-  `EVDEV_ABS_00`, or known Apple USB/Bluetooth IDs. Duplicate names and `-N`
-  suffixes are ambiguous and remain unscaled. Rendering uses saved calibration,
-  never live hardware. Schema 5 accepts versions 1–4 without recalibrating saved
+  `EVDEV_ABS_00`, or known Apple USB/Bluetooth IDs. Duplicate native names
+  remain unscaled; added compositor `-N` suffixes never fall back to a base name.
+  A unique exact native name can be calibrated even when it ends in digits.
+  Rendering uses saved calibration, never live hardware. Schema 5 accepts versions 1–4 without recalibrating saved
   curves; old undo records gain empty `calibration` metadata, preserving their
   original spacing. Every pointer edit saves the previous curve and calibration;
   undo payloads may restore that exact record. Device scale semantics stay the

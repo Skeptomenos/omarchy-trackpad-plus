@@ -658,6 +658,16 @@ class TrackpadTests(unittest.TestCase):
                      {'profile': 'mac', 'curve': m.DEFAULT_CURVE, 'calibration': {'apple-inc.-magic-trackpad': 47}})
         write.assert_not_called()
 
+    def test_unique_native_name_ending_digits_can_be_calibrated(self):
+        self.add_input_device('event5', 'Synaptics TM3512-010', '13:69',
+                              udev='E:EVDEV_ABS_00=::42\n')
+        self.assertEqual(m.device_resolution('synaptics-tm3512-010'), 42)
+        self.assertIsNone(m.device_resolution('synaptics-tm3512-010-1'))
+        self.add_input_device('event7', 'Synaptics TM3512-010', '13:71',
+                              udev='E:EVDEV_ABS_00=::80\n')
+        self.assertIsNone(m.device_resolution('synaptics-tm3512-010'))
+        self.assertIsNone(m.device_resolution('synaptics-tm3512-010-1'))
+
     def test_duplicate_sensor_names_never_guess_calibration(self):
         self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '05ac', '0265')
         self.add_input_device('event7', 'Apple Inc. Magic Trackpad', '13:71', '05ac', '0324', udev='E:EVDEV_ABS_00=::80\n')
