@@ -78,6 +78,14 @@ else:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
+    def test_optional_typing_guard_and_login_service_are_packaged(self):
+        import configparser
+        self.assertTrue((self.plugin / 'trackpad-typing-guard.py').is_file())
+        service = configparser.ConfigParser(interpolation=None)
+        service.read(self.plugin / 'trackpad-typing-guard.service')
+        self.assertEqual(service['Install']['WantedBy'], 'graphical-session.target')
+        self.assertIn(' restore', service['Service']['ExecStopPost'])
+
     def test_stow_gesture_cli_preserves_links_across_process_restarts(self):
         for layout in ('file', 'hypr-directory', 'config-directory'):
             with self.subTest(layout=layout):

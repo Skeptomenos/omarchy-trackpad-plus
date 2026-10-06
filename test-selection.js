@@ -15,9 +15,14 @@ function context() {
       { id: 'apple', label: 'Apple', connected: true, names: ['apple'], settings: { ...settings } },
       { id: 'dell', label: 'Dell', connected: true, names: ['dell'], settings: { ...settings, sensitivity: 0.3 } }
     ],
-    selectedDevice: 'apple', pendingActions: [], settingsError: '',
+    selectedDevice: 'apple', pendingActions: [], settingsError: '', deviceSettingsOpen: false,
+    editingCurve: false, gestureEditor: {activeFocus: false},
     editGeneration: 0, stateGeneration: 0, refreshPending: false,
     actionProc: { running: false }, stateProc: { running: false }, backend: 'trackpads.py',
+    palmProc: { running: false }, palmBackend: 'palm.py',
+    palmEditor: { settings: {supported: false}, activeFocus: false, busy: false, dirty: false,
+      error: '', resetDraft() { this.dirty = false }, acceptSettings(value) { this.settings = value },
+      beginEditing() { this.activeFocus = true } },
     Model: require('./Model.js'),
     Curve: require('./Curve.js'), previousFeels: {}, curveEditor: {},
     keyCatcher: { forceActiveFocus() {} },
@@ -344,3 +349,32 @@ function context() {
   assert.equal(model.parseTouchpadDevice(JSON.stringify({mice: [{name: 'bcm5974-mouse'}]})), '');
 }
 console.log('Passed: device selection, fine scroll steps, stale-read rejection, debounce ordering, timeout recovery, and IPC configuration.');
+
+{
+  const ctx = context();
+  ctx.activeTab = 'pointer';
+  ctx.palmEditor.settings = {supported: true};
+  assert.ok(ctx.navigationSections().includes('palm'));
+  ctx.focusSection = 'palm';
+  ctx.activateCursor();
+  assert.equal(ctx.keyboardNavigationBlocked(), true);
+  ctx.palmRequestDevice = 'apple';
+  ctx.selectedDevice = 'dell';
+  ctx.receivePalm(JSON.stringify({supported: true, threshold: 700}));
+  assert.equal(ctx.palmEditor.settings.threshold, undefined, 'stale Apple response must not update Dell');
+  ctx.palmProc.running = false;
+  ctx.applyPalm('700');
+  assert.equal(ctx.palmProc.running, false, 'Dell must never start an Apple palm write');
+}
+{
+  const ctx = context();
+  ctx.applyPalm('700');
+  assert.equal(ctx.palmEditor.busy, true);
+  assert.equal(ctx.palmProc.command[3], '120', 'administrator prompt gets a bounded, interactive deadline');
+  assert.deepEqual(Array.from(ctx.palmProc.command).slice(-3), ['set', 'apple', '700']);
+  ctx.palmEditor.dirty = true;
+  ctx.receivePalm(JSON.stringify({device: 'apple', supported: true, threshold: 700, pending: true}));
+  assert.equal(ctx.palmEditor.dirty, false);
+  assert.equal(ctx.palmEditor.settings.pending, true);
+}
+console.log('Palm panel action scoping and stale-response checks passed.');
