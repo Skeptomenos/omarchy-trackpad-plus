@@ -165,7 +165,7 @@ Panel {
     var queue = pendingActions.slice()
     // Replace only consecutive writes of the same scalar; preserve profile/undo ordering.
     var last = queue.length ? queue[queue.length - 1] : null
-    if (last && last.device === selectedDevice && last.option === option && option !== "pointer_feel") {
+    if (last && last.device === selectedDevice && last.option === option && option !== "pointer_feel" && option !== "scroll_feel") {
       queue.pop()
     }
     if (queue.length >= 128) {
@@ -965,7 +965,7 @@ Panel {
           Text {
             width: parent.width - Style.space(20)
             x: Style.space(10)
-            text: "Sets the scroll range and acceleration chart maximum. Use 1× for this trackpad or 3× for a wider range."
+            text: "Sets the scroll-speed range and pointer acceleration chart maximum. The scroll acceleration chart has its own 10× range."
             wrapMode: Text.WordWrap
             color: Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily

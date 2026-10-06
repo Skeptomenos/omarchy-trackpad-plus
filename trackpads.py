@@ -596,8 +596,7 @@ def ensure_custom_pointer(group):
 def enable_progressive_scroll(group):
     settings = group['settings']
     ensure_custom_pointer(group)
-    scale = settings.get('scroll_scale', max(1, settings.get('scroll_factor', 1)))
-    settings.setdefault('scroll_curve', preset_for_scale(scale, DEFAULT_SCROLL_CURVE))
+    settings.setdefault('scroll_curve', dict(DEFAULT_SCROLL_CURVE))
     settings.setdefault('scroll_curve_preset', 'mac')
     settings['scroll_progressive'] = True
 

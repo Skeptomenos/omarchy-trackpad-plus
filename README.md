@@ -404,6 +404,27 @@ effective `scroll_factor` and separate `scroll_scale`; only the effective factor
 is emitted to Hyprland. Back up both plugin and settings before upgrading;
 downgrading requires restoring the matching settings backup.
 
+## Progressive scrolling
+
+Open **Scrolling** and turn on **Progressive Scrolling** to make faster
+two-finger flicks travel farther. It is off by default, so existing scrolling
+stays linear. **Scroll Speed** and **Device scale** still control the overall
+scroll speed. The default curve adds a **1× multiplier for slow movement** and
+smoothly rises to **2× for fast flicks**, independent of Device scale.
+
+Use **Scroll acceleration** to choose **Mac-inspired** or edit a **Custom**
+curve. Its chart and gain controls have a separate **10× maximum**. Press
+**Apply & try** to save; **Restore previous** swaps back to the last applied
+scroll curve for that device. Choosing **Mac-inspired** restores the 1×–2×
+shape without changing Scroll Speed or Device scale.
+
+Progressive scrolling requires libinput's custom acceleration profile.
+Enabling it while the pointer uses **System** or **Flat** also selects the
+Mac-inspired pointer curve. You can then edit the pointer curve separately.
+Choosing **System** or **Flat** again disables progressive scrolling. Turning
+**Progressive Scrolling** off restores linear scrolling while keeping your
+pointer curve and saved scroll curve.
+
 ## How pointer feel works
 
 <img src="assets/screenshots/pointer-feel.png" alt="Custom pointer curve on a MacBook Air M2: precision 0.0100, start 0%, end 100%, and fast swipes 0.3500, on a 0–1× chart" width="430">

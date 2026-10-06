@@ -13,8 +13,6 @@ function scalePreset(curve, maximum) {
 
 function presetForScale(maximum) { return scalePreset(defaults(), maximum) }
 
-function scrollPresetForScale(maximum) { return scalePreset(scrollDefaults(), maximum) }
-
 function copy(value) { return JSON.parse(JSON.stringify(value)) }
 
 // Preserve the shape of saved three-handle curves when opening the new editor.
@@ -76,4 +74,4 @@ function fromScrollSettings(settings) {
   }
 }
 
-if (typeof module !== "undefined") module.exports = { defaults, scrollDefaults, presetForScale, scrollPresetForScale, copy, normalize, gain, points, sampledGain, adjust, fromSettings, fromScrollSettings }
+if (typeof module !== "undefined") module.exports = { defaults, scrollDefaults, presetForScale, copy, normalize, gain, points, sampledGain, adjust, fromSettings, fromScrollSettings }
