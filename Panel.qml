@@ -65,6 +65,43 @@ Panel {
   property int stateGeneration: 0
   property bool refreshPending: false
   readonly property string backend: decodeURIComponent(String(Qt.resolvedUrl("trackpads.py")).replace(/^file:\/\//, ""))
+  readonly property string palmBackend: decodeURIComponent(String(Qt.resolvedUrl("palm.py")).replace(/^file:\/\//, ""))
+  property bool palmReceived: false
+  property string palmRequestDevice: ""
+
+  function refreshPalm() {
+    if (palmProc.running) return
+    if (selectedDevice !== "apple") {
+      palmEditor.acceptSettings({supported: false})
+      return
+    }
+    palmRequestDevice = selectedDevice
+    palmReceived = false
+    palmProc.command = bounded(8, ["python3", "-B", palmBackend, "state", selectedDevice])
+    palmProc.running = true
+  }
+
+  function applyPalm(threshold) {
+    if (palmProc.running || selectedDevice !== "apple") return
+    palmRequestDevice = selectedDevice
+    palmReceived = false
+    palmEditor.error = ""
+    palmEditor.busy = true
+    palmProc.command = bounded(120, ["python3", "-B", palmBackend, "set", selectedDevice, threshold])
+    palmProc.running = true
+  }
+
+  function receivePalm(raw) {
+    palmReceived = true
+    if (palmRequestDevice !== selectedDevice) return
+    try {
+      var data = JSON.parse(raw)
+      if (data.error) { palmEditor.error = data.error; return }
+      if (palmEditor.busy) palmEditor.dirty = false
+      palmEditor.error = ""
+      palmEditor.acceptSettings(data)
+    } catch (error) { palmEditor.error = "Could not read palm settings" }
+  }
 
   function updateState(raw) {
     var data
@@ -72,6 +109,7 @@ Panel {
     if (data.error) { settingsError = data.error; return }
     devices = data.devices || []
     loadSelection()
+    refreshPalm()
   }
 
   function loadSelection() {
@@ -117,6 +155,10 @@ Panel {
     selectedDevice = key
     settingsError = ""
     loadSelection()
+    palmEditor.resetDraft()
+    palmEditor.error = ""
+    palmEditor.acceptSettings({supported: false})
+    refreshPalm()
   }
 
   function enqueue(option, value) {
@@ -272,7 +314,9 @@ Panel {
     }
     if (activeTab === "gestures") return sections
     if (pointerFeel.profile !== "mac" && pointerFeel.profile !== "custom") sections.push("pointer")
-    return sections.concat(["acceleration", "tap", "typing", "clickfinger"])
+    sections = sections.concat(["acceleration", "tap", "typing", "clickfinger"])
+    if (palmEditor.settings.supported) sections.push("palm")
+    return sections
   }
 
   function changeTab(tab) {
@@ -301,7 +345,7 @@ Panel {
     : "transparent"
 
   function keyboardNavigationBlocked() {
-    return editingCurve || gestureEditor.activeFocus
+    return editingCurve || gestureEditor.activeFocus || palmEditor.activeFocus
   }
 
   function moveCursor(delta) {
@@ -345,6 +389,7 @@ Panel {
     if (focusSection === "natural") { toggleNaturalScroll(); return }
     if (focusSection === "tap") { toggleTapToClick(); return }
     if (focusSection === "typing") { toggleDisableWhileTyping(); return }
+    if (focusSection === "palm") { palmEditor.beginEditing(); return }
     if (focusSection === "clickfinger") { toggleClickfingerBehavior(); return }
   }
 
@@ -615,6 +660,20 @@ Panel {
     }
     onExited: function(code, status) {
       Qt.callLater(function() { root.finishAction(code) })
+    }
+  }
+
+  Process {
+    id: palmProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.receivePalm(String(text))
+    }
+    onExited: function(code, status) {
+      if (root.palmRequestDevice === root.selectedDevice && code !== 0 && !root.palmReceived)
+        palmEditor.error = "Palm settings did not respond in time"
+      palmEditor.busy = false
+      if (root.palmRequestDevice !== root.selectedDevice) Qt.callLater(root.refreshPalm)
     }
   }
 
@@ -1395,6 +1454,22 @@ Panel {
             visible: root.activeTab === "pointer"
             enabled: root.touchpadEnabled
             onToggled: root.toggleClickfingerBehavior()
+          }
+
+          PalmSettings {
+            id: palmEditor
+            loading: palmProc.running && !busy
+            width: parent.width - Style.space(20)
+            x: Style.space(10)
+            visible: root.activeTab === "pointer" && root.selectedDevice === "apple" && settings.supported === true
+            foreground: root.bar.foreground
+            accent: Color.accent
+            fontFamily: root.bar.fontFamily
+            bodySize: Style.font.body
+            captionSize: Style.font.caption
+            unit: Style.space(1)
+            onApplyRequested: function(threshold) { root.applyPalm(threshold) }
+            onEditingFinished: keyCatcher.forceActiveFocus()
           }
         }
 
