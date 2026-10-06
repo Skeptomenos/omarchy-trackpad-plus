@@ -450,7 +450,7 @@ def validate_change(option, value):
             raise ValueError('Unknown scroll profile')
         validate_curve(value['curve'])
         return
-    if option != 'pointer_feel':
+    if option not in ('pointer_feel', 'pointer_restore'):
         validate_setting(option, value)
         return
     if not isinstance(value, dict) or not {'profile', 'curve'} <= set(value) or set(value) - {'profile', 'curve', 'calibration'}:
@@ -646,9 +646,9 @@ def migrate(state):
     return validate_state(updated)
 
 
-def capture_calibration(names):
+def capture_calibration(names, saved):
     return {name: resolution for name in names
-            if (resolution := device_resolution(name)) is not None}
+            if (resolution := device_resolution(name) or saved.get(name)) is not None}
 
 
 def ensure_custom_pointer(group):
@@ -666,7 +666,7 @@ def ensure_custom_pointer(group):
     settings['accel_profile'] = 'custom'
     settings['curve'] = preset_for_scale(scale)
     settings['curve_preset'] = 'mac'
-    group['curve_calibration'] = capture_calibration(group['names'])
+    group['curve_calibration'] = capture_calibration(group['names'], group.get('curve_calibration', {}))
 
 
 def enable_progressive_scroll(group):
@@ -690,12 +690,13 @@ def change(state, key, option, value):
         updated['devices'][key]['configured'] = True
     group = updated['devices'][key]
     settings = group['settings']
-    if option == 'pointer_feel':
+    if option in ('pointer_feel', 'pointer_restore'):
         validate_change(option, value)
         previous = group.get('previous_pointer_feel')
-        # Old clients may omit metadata when sending the saved undo record.
-        restoring = previous is not None and (value == previous or
-                    ('calibration' not in value and value == {k: previous[k] for k in ('profile', 'curve')}))
+        # Undo is explicit; a fresh Apply may equal the old curve numerically.
+        restoring = option == 'pointer_restore' or 'calibration' in value
+        if restoring and (previous is None or value not in (previous, {k: previous[k] for k in ('profile', 'curve')})):
+            raise ValueError('Restore must match the saved previous pointer feel')
         if 'calibration' in value and not restoring:
             raise ValueError('Calibration can only restore the saved previous pointer feel')
         profile = value['profile']
@@ -709,9 +710,11 @@ def change(state, key, option, value):
         if restoring:
             calibration = previous.get('calibration', {})
         elif profile in ('mac', 'custom'):
-            calibration = capture_calibration(group['names'])
+            calibration = capture_calibration(group['names'], group.get('curve_calibration', {}))
         else:
-            calibration = {}
+            # Native profiles ignore calibration, but keep remembered sensors
+            # available for a later explicit custom Apply while disconnected.
+            calibration = group.get('curve_calibration', {})
         group['curve_calibration'] = copy.deepcopy(calibration)
         settings['accel_profile'] = 'custom' if profile in ('mac', 'custom') else profile
         settings['curve'] = dict(curve)  # The editor sizes new presets to the device range.

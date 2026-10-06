@@ -165,7 +165,7 @@ Panel {
     var queue = pendingActions.slice()
     // Replace only consecutive writes of the same scalar; preserve profile/undo ordering.
     var last = queue.length ? queue[queue.length - 1] : null
-    if (last && last.device === selectedDevice && last.option === option && option !== "pointer_feel" && option !== "scroll_feel") {
+    if (last && last.device === selectedDevice && last.option === option && option !== "pointer_feel" && option !== "scroll_feel" && option !== "pointer_restore") {
       queue.pop()
     }
     if (queue.length >= 128) {
@@ -181,7 +181,7 @@ Panel {
     for (var i = 0; i < devices.length; i++) {
       if (devices[i].id === selectedDevice) {
         var settings = devices[i].settings
-        if (option === "pointer_feel") {
+        if (option === "pointer_feel" || option === "pointer_restore") {
           devices[i].previous_pointer_feel = Curve.fromSettings(settings)
           devices[i].previous_pointer_feel.calibration = Curve.copy(devices[i].curve_calibration || {})
           settings.accel_profile = value.profile === "mac" || value.profile === "custom" ? "custom" : value.profile
@@ -472,7 +472,7 @@ Panel {
     enqueue("scroll_progressive", next)
   }
 
-  function applyPointerFeel(value) {
+  function applyPointerFeel(value, restoring) {
     if (curveKind === "scroll") {
       var previousScroll = Curve.copy(previousScrollFeels)
       previousScroll[selectedDevice] = Curve.copy(scrollFeel)
@@ -484,7 +484,7 @@ Panel {
     var previous = Curve.copy(previousFeels)
     previous[selectedDevice] = Curve.copy(pointerFeel)
     previousFeels = previous
-    enqueue("pointer_feel", value)
+    enqueue(restoring ? "pointer_restore" : "pointer_feel", value)
     loadSelection()
   }
 
@@ -498,7 +498,7 @@ Panel {
     }
     if (!previousFeels[selectedDevice]) return
     var value = Curve.copy(previousFeels[selectedDevice])
-    applyPointerFeel(value)
+    applyPointerFeel(value, true)
     curveEditor.draft = { profile: value.profile, curve: Curve.copy(value.curve) }
   }
 
