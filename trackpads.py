@@ -94,13 +94,11 @@ KERNEL_RESOLUTIONS = {(vendor, product): resolution
 
 
 def device_resolution(name):
-    """Resolve only a unique unsuffixed evdev name; never guess duplicate identity.
+    """Resolve only a unique exact evdev name; never strip compositor suffixes.
 
-    Hyprland's duplicate -N suffix does not identify a sysfs node. Even if only
-    one such node is currently connected, a saved suffixed name is ambiguous.
+    A native name may itself end in digits. Hyprland's added duplicate -N
+    suffix does not identify a sysfs node and must not match the base name.
     """
-    if re.search(r'-[0-9]+$', name):
-        return None
     matches = []
     for event in SYSFS_INPUT.glob('event*'):
         try:
