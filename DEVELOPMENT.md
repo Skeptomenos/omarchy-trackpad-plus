@@ -25,6 +25,15 @@ This release identifier is separate from the backend's settings schema version.
 
 ## Architecture
 
+- `trackpad-typing-guard.py` / `trackpad-typing-guard.service`: optional user
+  service for the saved Apple group when native typing protection is unavailable.
+  Installation is explicit and separate from plugin installation. Keep
+  `WantedBy=graphical-session.target` so an enabled guard returns after login;
+  retain stop-time restoration and avoid logging keyboard events.
+- `palm.py` / `palm-system.py` / `PalmSettings.qml`: model-specific Apple native
+  palm thresholds, explicit authorization, safe rule merging, backup and atomic
+  writes. Keep privileged code root-owned and run it with Python isolated mode.
+  The editor preserves drafts during polling and rejects stale device responses.
 - `Panel.qml`: Omarchy bar widget, device selection, debounced action queue,
   deadlines, and rejection of stale reads.
 - `CurveEditor.qml` / `Curve.js`: draft curve editing, spinners, presets, and
@@ -116,6 +125,8 @@ Controls/Test, and Qt development tools (`qmllint`, `qmltestrunner`):
 
 ```sh
 python3 test_trackpads.py
+python3 test_palm.py
+python3 test_typing_guard.py
 python3 test_gestures.py
 node test-selection.js
 node test-overview-model.js
@@ -127,6 +138,8 @@ python3 test_ipc.py
 python3 lint-qml.py
 QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
   /usr/lib/qt6/bin/qmltestrunner -input tst_curve.qml
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
+  /usr/lib/qt6/bin/qmltestrunner -input tst_palm.qml
 QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
   /usr/lib/qt6/bin/qmltestrunner -input tst_gestures.qml
 QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic \
