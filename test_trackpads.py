@@ -857,4 +857,12 @@ class TrackpadTests(unittest.TestCase):
         self.assertIn('accel_profile = "' + m.curve_profile(m.DEFAULT_CURVE, 47) + '"', lua)
         self.assertIn('scroll_points = "' + m.scroll_profile(m.DEFAULT_SCROLL_CURVE) + '"', lua)
 
+    def test_progressive_scroll_captures_calibration_for_new_custom_pointer(self):
+        state = m.migrate(self.state)
+        with patch.object(m, 'device_resolution', return_value=47):
+            m.enable_progressive_scroll(state['devices']['apple'])
+        group = state['devices']['apple']
+        self.assertEqual(group['curve_calibration'], {name: 47 for name in group['names']})
+        self.assertEqual(group['previous_pointer_feel']['calibration'], {})
+
 if __name__=='__main__':unittest.main()
