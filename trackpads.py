@@ -646,6 +646,11 @@ def migrate(state):
     return validate_state(updated)
 
 
+def capture_calibration(names):
+    return {name: resolution for name in names
+            if (resolution := device_resolution(name)) is not None}
+
+
 def ensure_custom_pointer(group):
     """Progressive scroll_points only apply when accel_profile is custom."""
     settings = group['settings']
@@ -653,13 +658,15 @@ def ensure_custom_pointer(group):
         return
     old_profile = settings.get('accel_profile', 'adaptive')
     group['previous_pointer_feel'] = {
-        'profile': settings.get('curve_preset', 'custom') if old_profile == 'custom' else old_profile,
+        'profile': old_profile,
         'curve': copy.deepcopy(settings.get('curve', DEFAULT_CURVE)),
+        'calibration': copy.deepcopy(group.get('curve_calibration', {})),
     }
     scale = settings.get('scroll_scale', max(1, settings.get('scroll_factor', 1)))
     settings['accel_profile'] = 'custom'
     settings['curve'] = preset_for_scale(scale)
     settings['curve_preset'] = 'mac'
+    group['curve_calibration'] = capture_calibration(group['names'])
 
 
 def enable_progressive_scroll(group):
@@ -685,7 +692,6 @@ def change(state, key, option, value):
     settings = group['settings']
     if option == 'pointer_feel':
         validate_change(option, value)
-        group = updated['devices'][key]
         previous = group.get('previous_pointer_feel')
         # Old clients may omit metadata when sending the saved undo record.
         restoring = previous is not None and (value == previous or
@@ -693,9 +699,7 @@ def change(state, key, option, value):
         if 'calibration' in value and not restoring:
             raise ValueError('Calibration can only restore the saved previous pointer feel')
         profile = value['profile']
-        if profile not in ('adaptive', 'flat', 'mac', 'custom'):
-            raise ValueError('Unknown pointer profile')
-        curve = validate_curve(value['curve'])
+        curve = value['curve']
         old_profile = settings.get('accel_profile', 'adaptive')
         group['previous_pointer_feel'] = {
             'profile': settings.get('curve_preset', 'custom') if old_profile == 'custom' else old_profile,
@@ -705,8 +709,7 @@ def change(state, key, option, value):
         if restoring:
             calibration = previous.get('calibration', {})
         elif profile in ('mac', 'custom'):
-            calibration = {name: resolution for name in group['names']
-                           if (resolution := device_resolution(name)) is not None}
+            calibration = capture_calibration(group['names'])
         else:
             calibration = {}
         group['curve_calibration'] = copy.deepcopy(calibration)
@@ -724,7 +727,6 @@ def change(state, key, option, value):
         enable_progressive_scroll(group)
         settings['scroll_curve'] = dict(value['curve'])
         settings['scroll_curve_preset'] = 'mac' if value['profile'] == 'mac' else 'custom'
-        settings['scroll_progressive'] = True
     else:
         validate_setting(option, value)
         if option == 'scroll_scale':
