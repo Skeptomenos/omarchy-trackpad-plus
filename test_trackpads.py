@@ -634,14 +634,14 @@ class TrackpadTests(unittest.TestCase):
         with patch.object(m, 'device_resolution', side_effect=AssertionError('Rendering must use saved calibration')):
             self.assertEqual(m.lua_for(state['devices']), connected)
 
-    def test_undo_from_client_without_calibration_preserves_saved_spacing(self):
+    def test_explicit_undo_without_calibration_preserves_saved_spacing(self):
         self.add_input_device('event5', 'Apple Inc. Magic Trackpad', '13:69', '05ac', '0265')
         with patch.object(m, 'hypr', return_value='ok'):
             legacy = m.migrate(self.state)
             legacy['devices']['apple']['settings'].update(accel_profile='custom', curve=dict(m.DEFAULT_CURVE), curve_preset='custom')
             changed = m.change(legacy, 'apple', 'pointer_feel', {'profile': 'mac', 'curve': dict(m.DEFAULT_CURVE, fast=2)})
             previous = changed['devices']['apple']['previous_pointer_feel']
-            restored = m.change(changed, 'apple', 'pointer_feel', {k: previous[k] for k in ('profile', 'curve')})
+            restored = m.change(changed, 'apple', 'pointer_restore', {k: previous[k] for k in ('profile', 'curve')})
             self.assertEqual(m.lua_for(restored['devices']), m.lua_for(legacy['devices']))
 
     def test_invalid_or_unowned_calibration_is_rejected_before_writes(self):
@@ -771,5 +771,30 @@ class TrackpadTests(unittest.TestCase):
             with patch.object(m, 'atomic_write') as write, self.assertRaises(ValueError):
                 m.save(state)
             write.assert_not_called()
+
+    def test_reapplying_previous_curve_is_apply_not_undo(self):
+        state = m.migrate(self.state)
+        group = state['devices']['apple']
+        group['settings'].update(accel_profile='custom', curve_preset='mac', curve=dict(m.DEFAULT_CURVE))
+        with patch.object(m, 'hypr', return_value='ok'), patch.object(m, 'device_resolution', return_value=47):
+            system = m.change(state, 'apple', 'pointer_feel', {'profile':'adaptive', 'curve':m.DEFAULT_CURVE})
+            applied = m.change(system, 'apple', 'pointer_feel', {'profile':'mac', 'curve':m.DEFAULT_CURVE})
+        self.assertEqual(applied['devices']['apple']['curve_calibration'],
+                         {name:47 for name in group['names']})
+
+    def test_edit_while_sensor_disconnected_retains_calibration(self):
+        state = m.migrate(self.state)
+        group = state['devices']['apple']
+        group['settings'].update(accel_profile='custom', curve_preset='custom', curve=dict(m.DEFAULT_CURVE))
+        group['curve_calibration'] = {name:47 for name in group['names']}
+        with patch.object(m, 'hypr', return_value='ok'), patch.object(m, 'device_resolution', return_value=None):
+            applied = m.change(state, 'apple', 'pointer_feel',
+                               {'profile':'custom', 'curve':dict(m.DEFAULT_CURVE, fast=2)})
+        self.assertEqual(applied['devices']['apple']['curve_calibration'],group['curve_calibration'])
+        with patch.object(m, 'hypr', return_value='ok'), patch.object(m, 'device_resolution', return_value=None):
+            system = m.change(state, 'apple', 'pointer_feel', {'profile':'adaptive', 'curve':m.DEFAULT_CURVE})
+            reapplied = m.change(system, 'apple', 'pointer_feel',
+                                 {'profile':'custom', 'curve':dict(m.DEFAULT_CURVE, fast=2)})
+        self.assertEqual(reapplied['devices']['apple']['curve_calibration'], group['curve_calibration'])
 
 if __name__=='__main__':unittest.main()

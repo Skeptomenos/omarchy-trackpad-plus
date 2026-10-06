@@ -45,6 +45,7 @@ function context() {
     'optimistic undo must retain the old curve calibration');
   ctx.loadSelection();
   ctx.restorePointerFeel();
+  assert.equal(ctx.pendingActions.at(-1).option, 'pointer_restore');
   assert.equal(ctx.pendingActions.at(-1).value.calibration.apple, 47,
     'undo sends saved calibration to the backend');
   assert.equal(Object.hasOwn(ctx.curveEditor.draft, 'calibration'), false,

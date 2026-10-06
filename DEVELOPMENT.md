@@ -36,6 +36,8 @@ This release identifier is separate from the backend's settings schema version.
   The editor preserves drafts during polling and rejects stale device responses.
 - `Panel.qml`: Omarchy bar widget, device selection, debounced action queue,
   deadlines, and rejection of stale reads.
+  Pointer Undo uses the backend's explicit `pointer_restore` operation; fresh
+  `pointer_feel` Apply requests must not be inferred as Undo from curve equality.
 - `CurveEditor.qml` / `Curve.js`: draft curve editing, spinners, presets, and
   target practice. Only Apply changes the live profile.
 - `trackpads.py`: device discovery, validation, file locking, persistence, and
