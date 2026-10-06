@@ -116,7 +116,33 @@ Do not change saved group IDs or historical state paths without a migration.
 
 ## Complete automated suite
 
-Run on an Omarchy host with Python 3, Node.js, libinput, Quickshell, Qt 6 Quick
+GitHub Actions runs `bash tools/check.sh portable` on Ubuntu 24.04 for pull
+requests and pushes to `main`. It uses Python 3, Node.js 24, Lua 5.4, and `libinput10`;
+the native curve acceptance tests run against the installed library. The job
+needs no desktop session, input-device access, repository secrets, or write
+token. Third-party pull requests run on GitHub-hosted runners.
+
+The portable checks cover backend behavior, gestures against fake compositor
+responses, device selection, the overview model/controller, lock protocol
+parsing, and tracked-file installation. They check manifest JSON syntax, but
+Omarchy's manifest validation and host integration run separately.
+
+Run all automated checks, including the portable suite, on an Omarchy host:
+
+```sh
+bash tools/check.sh host
+```
+
+Neither command performs live desktop changes. `host` adds Omarchy manifest
+validation, both real offscreen IPC checks, QML lint, and all four Qt suites.
+It fails when a dependency or check is missing rather than silently skipping it.
+Live GPU rendering, physical gestures, and installation into a desktop session
+remain separate release checks below. Capture release results and pending
+checks in [MARKETPLACE.md](MARKETPLACE.md).
+
+To run individual suites while developing:
+
+Run on an Omarchy host with Python 3, Node.js, Lua 5.4, libinput, Quickshell, Qt 6 Quick
 Controls/Test, and Qt development tools (`qmllint`, `qmltestrunner`):
 
 ```sh
