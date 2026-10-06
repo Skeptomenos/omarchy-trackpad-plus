@@ -449,12 +449,12 @@ that gives 0.1875× precision and 1.00× fast swipes. Existing curves change onl
 when you explicitly apply an edit or preset. This editor does not add scroll
 momentum or change gestures or haptic feedback.
 
-Custom and Mac-inspired profiles currently use the same sample spacing across
-sensors. On high-resolution trackpads, including a reported Intel MacBook Pro
-14,3, they can feel too fast. System and Flat profiles remain available. The
-[proposed per-sensor correction](https://github.com/davefano/omarchy-trackpad-plus/pull/12)
-is not included in version 2026.10.05.0; it still needs device-identity and
-saved-profile compatibility work.
+Existing saved Custom and Mac-inspired curves retain their original spacing.
+An explicit **Apply & try** now saves per-interface sensor calibration when the
+device can be identified uniquely. This corrects high-resolution tracking without
+changing existing curves on upgrade. Ambiguous, duplicate, and unknown sensors
+keep the original spacing; System and Flat remain available. Calibration and
+Undo survive disconnection and later refreshes.
 
 <details>
 <summary>How the curve reaches libinput</summary>
